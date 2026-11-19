@@ -254,3 +254,25 @@ zig build && deno bench -A test/benchmark.js
 ## License
 
 MIT
+
+## Incremental documents
+
+After initialization, create one session per document. Append chunks or call
+`update(fullAppendOnlyText)` with successively longer snapshots. For edits use
+`edit(fromByte, replacementTail)` or `reset(fullText)`. Offsets count UTF-8
+bytes. Each update replaces all previous blocks starting at or after
+`replaceFrom` with its `blocks`, each containing `{offset, id, html}`.
+`finishedBytes` is the restart offset and `finishedIds` identifies newly
+finished blocks. Reference definitions can invalidate earlier output, in which
+case the session rebuilds and emits the replacement from byte zero.
+Call `close()` to release the source and reference cache.
+
+```js
+const session = createSession();
+try {
+  const first = session.append("First paragraph.\n\n");
+  const next = session.append("Second paragraph.");
+} finally {
+  session.close();
+}
+```

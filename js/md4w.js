@@ -139,7 +139,14 @@ export function renderToString(input, options = {}, renderer = 0) {
   if (!(data instanceof Uint8Array)) {
     throw new TypeError("input must be a string or Uint8Array");
   }
-  let estHtmlSize = Math.ceil(data.length * 1.5);
+  const estHtmlSize = Math.ceil(data.length * 1.5);
+  return collectOutput(renderer, estHtmlSize, () => wasm.render(
+    allocMem(data), validateParseFlags(options.parseFlags), Math.max(estHtmlSize, 512),
+    typeof highlighter === "function" ? 1 : 0, renderer,
+  ));
+}
+
+function collectOutput(renderer, estHtmlSize, render) {
   let buffer = new Uint8Array(estHtmlSize);
   let len = 0;
   const starts = [];
@@ -154,14 +161,12 @@ export function renderToString(input, options = {}, renderer = 0) {
     buffer.set(chunk, len);
     len += chunkSize;
   };
-  const ptrLen = wasm.render(
-    allocMem(data),
-    validateParseFlags(options.parseFlags),
-    Math.max(estHtmlSize, 512),
-    typeof highlighter === "function" ? 1 : 0,
-    renderer,
-  );
-  emit(new Uint8Array(readMem(ptrLen)));
+  const ptrLen = render();
+  if (ptrLen === -1n) {
+    emit = beginBlock = null;
+    return null;
+  }
+  if (ptrLen) emit(readMem(ptrLen));
   emit = null;
   if (renderer === 3) {
     beginBlock = null;
@@ -272,4 +277,77 @@ export function parseWithBoundary(input, options) {
 
 export function parseBlocks(input, options) {
   return renderToString(input, options, 3);
+}
+
+export function createSession(options = {}) {
+  const instance = wasm;
+  let handle = instance.openSession();
+  let length = 0;
+  let boundary = 0;
+  let stringLength = 0;
+  let highSurrogate = "";
+  const flags = validateParseFlags(options.parseFlags);
+
+  function write(input, from) {
+    if (!handle || wasm !== instance) throw new Error("Inactive markdown session");
+    const bytes = typeof input === "string" ? enc.encode(input) : input;
+    if (!(bytes instanceof Uint8Array)) throw new TypeError("Expected markdown text or bytes");
+    length = from + bytes.length;
+    const ptr = instance.resizeSource(handle, length);
+    if (bytes.length) new Uint8Array(instance.memory.buffer, ptr + from, bytes.length).set(bytes);
+    let replaceFrom = boundary <= from ? boundary : 0;
+    const render = () => collectOutput(3, Math.max(256, length - replaceFrom), () =>
+      instance.renderSession(handle, replaceFrom, flags, typeof highlighter === "function" ? 1 : 0));
+    let blocks = render();
+    const rebuild = blocks === null;
+    if (rebuild) {
+      replaceFrom = 0;
+      blocks = render();
+    }
+    const result = instance.parseBoundary();
+    boundary = Number(result & 0xffffffffn);
+    return { replaceFrom, finishedBytes: boundary, definitionsSeen: rebuild || result >> 32n !== 0n,
+      blocks, finishedIds: blocks.filter(b => b.offset < boundary).map(b => b.id) };
+  }
+
+  function append(input) {
+    let from = length;
+    if (typeof input === "string") {
+      if (stringLength !== null) stringLength += input.length;
+      if (highSurrogate) {
+        input = highSurrogate + input;
+        from -= 3;
+      }
+      const last = input.charCodeAt(input.length - 1);
+      highSurrogate = last >= 0xd800 && last <= 0xdbff ? input.slice(-1) : "";
+    } else {
+      stringLength = null;
+      highSurrogate = "";
+    }
+    return write(input, from);
+  }
+
+  return {
+    append,
+    update(full) {
+      if (typeof full === "string" && stringLength === null) throw new Error("Use reset to switch input types");
+      const end = typeof full === "string" ? stringLength : length;
+      return full.length < end ? this.reset(full) : append(full.slice(end));
+    },
+    edit(from, input) {
+      if (!Number.isInteger(from) || from < 0 || from > length) throw new RangeError("Invalid source byte offset");
+      stringLength = null;
+      highSurrogate = "";
+      return write(input, from);
+    },
+    reset(input) {
+      length = boundary = stringLength = 0;
+      highSurrogate = "";
+      return append(input);
+    },
+    close() {
+      if (handle) instance.closeSession(handle);
+      handle = 0;
+    },
+  };
 }

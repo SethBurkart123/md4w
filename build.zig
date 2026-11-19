@@ -19,6 +19,7 @@ pub fn buildWasm(b: *std.Build, source: std.Build.LazyPath, optimize: std.builti
     });
     lib.addCSourceFile(.{ .file = source, .flags = &.{} });
     lib.addIncludePath(.{ .path = "vendor/md4c/src" });
+    lib.addIncludePath(.{ .path = "src" });
     lib.linkLibC();
     lib.rdynamic = true;
     b.installArtifact(lib);
