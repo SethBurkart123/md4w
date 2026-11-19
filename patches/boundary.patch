@@ -1,16 +1,67 @@
 --- md4c.c
 +++ md4c.c
-@@ -5814,6 +5814,9 @@
-     return indent - total_indent;
+@@ -180,6 +180,7 @@
+ 
+     /* Reference definitions. */
+     MD_REF_DEF* ref_defs;
++    OFF source_line;
+     int n_ref_defs;
+     int alloc_ref_defs;
+     void** ref_def_hashtable;
+@@ -4658,6 +4659,7 @@
+ #define MD_BLOCK_SETEXT_HEADER      0x08
+ 
+ struct MD_BLOCK_tag {
++    OFF source_start;
+     MD_BLOCKTYPE type  :  8;
+     unsigned flags     :  8;
+ 
+@@ -4888,6 +4890,8 @@
+     return ret;
  }
  
++extern void md4w_block(void* userdata, MD_SIZE offset);
++
+ static int
+ md_process_all_blocks(MD_CTX* ctx)
+ {
+@@ -4907,6 +4911,9 @@
+             MD_BLOCK_OL_DETAIL ol;
+             MD_BLOCK_LI_DETAIL li;
+         } det;
++
++        if(ctx->n_containers == 0 && !(block->flags & MD_BLOCK_CONTAINER_CLOSER))
++            md4w_block(ctx->userdata, block->source_start);
+ 
+         switch(block->type) {
+             case MD_BLOCK_UL:
+@@ -5018,6 +5025,7 @@
+     if(block == NULL)
+         return -1;
+ 
++    block->source_start = ctx->source_line;
+     switch(line->type) {
+         case MD_LINE_HR:
+             block->type = MD_BLOCK_HR;
+@@ -5195,6 +5203,7 @@
+     if(block == NULL)
+         return -1;
+ 
++    block->source_start = ctx->source_line;
+     block->type = type;
+     block->flags = flags;
+     block->data = data;
+@@ -5813,6 +5822,9 @@
+     *p_end = off;
+     return indent - total_indent;
+ }
++
 +extern void md4w_boundary(void* userdata, MD_SIZE offset);
 +extern void md4w_definitions(void* userdata);
-+
+ 
  static const MD_LINE_ANALYSIS md_dummy_blank_line = { MD_LINE_BLANK, 0, 0, 0, 0, 0 };
  
- /* Analyze type of the line and find some its properties. This serves as a
-@@ -6281,6 +6284,17 @@
+@@ -6281,6 +6293,17 @@
          }
      }
  
@@ -28,7 +79,14 @@
      /* Leave any containers we are not part of anymore. */
      if(n_children == 0  &&  n_parents + n_brothers < ctx->n_containers)
          MD_CHECK(md_leave_child_containers(ctx, n_parents + n_brothers));
-@@ -6404,6 +6418,7 @@
+@@ -6398,12 +6421,14 @@
+         if(line == pivot_line)
+             line = (line == &line_buf[0] ? &line_buf[1] : &line_buf[0]);
+ 
++        ctx->source_line = off;
+         MD_CHECK(md_analyze_line(ctx, off, &off, pivot_line, line));
+         MD_CHECK(md_process_line(ctx, &pivot_line, line));
+     }
  
      md_end_current_block(ctx);
  

@@ -142,6 +142,8 @@ export function renderToString(input, options = {}, renderer = 0) {
   let estHtmlSize = Math.ceil(data.length * 1.5);
   let buffer = new Uint8Array(estHtmlSize);
   let len = 0;
+  const starts = [];
+  if (renderer === 3) beginBlock = offset => starts.push({ offset, index: len });
   emit = (chunk) => {
     const chunkSize = chunk.length;
     if (len + chunkSize > buffer.length) {
@@ -161,6 +163,17 @@ export function renderToString(input, options = {}, renderer = 0) {
   );
   emit(new Uint8Array(readMem(ptrLen)));
   emit = null;
+  if (renderer === 3) {
+    beginBlock = null;
+    return starts.map(({ offset, index }, i) => {
+      const next = starts[i + 1];
+      const html = dec.decode(buffer.subarray(index, next ? next.index : len));
+      const bytes = buffer.subarray(index, next ? next.index : len);
+      let hash = 2166136261;
+      for (const byte of bytes) hash = Math.imul(hash ^ byte, 16777619);
+      return { offset, id: offset + "-" + (hash >>> 0).toString(16), html };
+    });
+  }
   return dec.decode(buffer.subarray(0, len));
 }
 
@@ -226,8 +239,11 @@ export function setCodeHighlighter(codeHighlighter) {
  * @param {WebAssembly.Module | { allocMem: CallableFunction }} wasmModule
  * @returns {void}
  */
+let beginBlock;
+
 export function initWasm(wasmModule) {
   const env = {
+    beginBlock: offset => beginBlock(offset),
     emitChunk: (ptrLen) => {
       emit(readMem(ptrLen));
     },
@@ -252,4 +268,8 @@ export function parseWithBoundary(input, options) {
   const html = mdToHtml(input, options);
   const result = wasm.parseBoundary();
   return { html, finishedBytes: Number(result & 0xffffffffn), definitionsSeen: result >> 32n !== 0n };
+}
+
+export function parseBlocks(input, options) {
+  return renderToString(input, options, 3);
 }

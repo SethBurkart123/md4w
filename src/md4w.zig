@@ -7,6 +7,7 @@ const allocator = std.heap.wasm_allocator;
 
 // js functions
 const js = struct {
+    pub extern fn beginBlock(offset: u32) void;
     pub extern fn emitChunk(ptr_len: u64) void;
     pub extern fn emitCodeBlock(language_ptr_len: u64, code_ptr_len: u64) void;
 };
@@ -34,6 +35,7 @@ const slugCharMap = [256]u8{
 
 /// The writer handles the output of the md4c parser
 const Writer = struct {
+    blocks: bool = false,
     boundary: u32 = 0,
     definitions: bool = false,
     buf: []u8 = undefined,
@@ -732,6 +734,13 @@ export fn allocMem(length: u32) u64 {
     }));
 }
 
+export fn md4w_block(writer: *Writer, offset: u32) void {
+    if (writer.blocks) {
+        writer.flush();
+        js.beginBlock(offset);
+    }
+}
+
 export fn md4w_boundary(userdata: *Writer, offset: u32) void {
     userdata.boundary = offset;
 }
@@ -767,6 +776,7 @@ export fn render(ptr_len: u64, flags: usize, buffer_size: usize, has_code_highli
         .syntax = null,
     };
 
+    writer.blocks = output_type == 3;
     const output_json = output_type == 2;
     if (output_json) {
         parser.enter_block = JOSNRenderer.enterBlock;

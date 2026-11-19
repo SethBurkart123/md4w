@@ -213,3 +213,11 @@ export function parseWithBoundary(input: string | Uint8Array, options?: Options)
   finishedBytes: number;
   definitionsSeen: boolean;
 };
+
+export interface MarkdownBlock {
+  offset: number;
+  id: string;
+  html: string;
+}
+
+export function parseBlocks(input: string | Uint8Array, options?: Options): MarkdownBlock[];
