@@ -54,7 +54,14 @@ for (const source of ["| a | b |", "| a | b |\n", "| a | b", "| a | b |\n|-", "|
   assert.equal(session.finish().blocks[0].html, mdToHtml(source), source);
   session.close();
 }
-for (const source of ["text\n| a | b |", "|"]) {
+for (const [source, options] of [
+  ["| `a|b` | c |", {}], ["| {{a|b}} | c |", { rules: [{ open: "{{", close: "}}", tag: "value" }] }],
+]) {
+  const session = createSession({ streaming: true, ...options });
+  assert.equal(session.append(source).blocks[0].html.match(/<th>/g).length, 2, source);
+  session.close();
+}
+for (const source of ["text\n| a | b |", "|", "| |", "a | b\n---|---"]) {
   const session = createSession({ streaming: true });
   assert.equal(session.append(source).blocks.map(b => b.html).join(""), mdToHtml(source), source);
   session.close();
