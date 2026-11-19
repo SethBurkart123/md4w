@@ -34,6 +34,8 @@ const slugCharMap = [256]u8{
 
 /// The writer handles the output of the md4c parser
 const Writer = struct {
+    boundary: u32 = 0,
+    definitions: bool = false,
     buf: []u8 = undefined,
     len: usize = 0,
     slug: []u8 = undefined,
@@ -730,6 +732,20 @@ export fn allocMem(length: u32) u64 {
     }));
 }
 
+export fn md4w_boundary(userdata: *Writer, offset: u32) void {
+    userdata.boundary = offset;
+}
+
+export fn md4w_definitions(userdata: *Writer) void {
+    userdata.definitions = true;
+}
+
+var last_boundary: u64 = 0;
+
+export fn parseBoundary() u64 {
+    return last_boundary;
+}
+
 /// the main function to render markdown to html
 export fn render(ptr_len: u64, flags: usize, buffer_size: usize, has_code_highlighter: usize, output_type: usize) u64 {
     const md = toSlice(ptr_len);
@@ -775,6 +791,8 @@ export fn render(ptr_len: u64, flags: usize, buffer_size: usize, has_code_highli
         writer.stripTrailingComma();
         writer.writeByte(']');
     }
+
+    last_boundary = @as(u64, @intFromBool(writer.definitions)) << 32 | writer.boundary;
 
     // return remaining buffer
     return toPtrLen(writer.buf[0..writer.len]);

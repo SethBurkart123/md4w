@@ -1,0 +1,38 @@
+--- md4c.c
++++ md4c.c
+@@ -5814,6 +5814,9 @@
+     return indent - total_indent;
+ }
+ 
++extern void md4w_boundary(void* userdata, MD_SIZE offset);
++extern void md4w_definitions(void* userdata);
++
+ static const MD_LINE_ANALYSIS md_dummy_blank_line = { MD_LINE_BLANK, 0, 0, 0, 0, 0 };
+ 
+ /* Analyze type of the line and find some its properties. This serves as a
+@@ -6281,6 +6284,17 @@
+         }
+     }
+ 
++    /* An append may reclassify the entire final, unterminated line. */
++    if(off > beg && ISNEWLINE(off-1) && n_parents == 0 && n_brothers == 0) {
++        if(n_children > 0 || ctx->n_containers > 0 || line->enforce_new_block ||
++           (line->type != pivot_line->type && line->type != MD_LINE_SETEXTUNDERLINE &&
++            line->type != MD_LINE_TABLEUNDERLINE && line->type != MD_LINE_BLANK))
++            md4w_boundary(ctx->userdata, beg);
++        if(n_children == 0 && (line->type == MD_LINE_BLANK || line->type == MD_LINE_HR ||
++                              line->type == MD_LINE_ATXHEADER))
++            md4w_boundary(ctx->userdata, off);
++    }
++
+     /* Leave any containers we are not part of anymore. */
+     if(n_children == 0  &&  n_parents + n_brothers < ctx->n_containers)
+         MD_CHECK(md_leave_child_containers(ctx, n_parents + n_brothers));
+@@ -6404,6 +6418,7 @@
+ 
+     md_end_current_block(ctx);
+ 
++    if(ctx->n_ref_defs > 0) md4w_definitions(ctx->userdata);
+     MD_CHECK(md_build_ref_def_hashtable(ctx));
+ 
+     /* Process all blocks. */
