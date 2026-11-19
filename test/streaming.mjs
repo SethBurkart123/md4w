@@ -72,6 +72,11 @@ for (const source of ["|", "| ", "| |"]) {
   assert.equal(session.finish().blocks.map(b => b.html).join(""), mdToHtml(source), source);
   session.close();
 }
+for (const [source, options] of [["|", { parseFlags: 0 }], ["# |", {}]]) {
+  const session = createSession({ streaming: true, ...options });
+  assert.equal(session.append(source).blocks[0].html, mdToHtml(source, options), source);
+  session.close();
+}
 const afterText = createSession({ streaming: true });
 assert.equal(afterText.append("text\n\n|").blocks.map(b => b.html).join(""), "<p>text</p>\n");
 afterText.close();
