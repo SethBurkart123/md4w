@@ -66,7 +66,16 @@ for (const [source, cell] of [["| *hello", "<em>hello</em>"], ["| [label](https:
   assert.ok(session.append(source).blocks[0].html.includes(`<th>${cell}</th>`), source);
   session.close();
 }
-for (const source of ["text\n| a | b |", "|", "| |", "a | b\n---|---"]) {
+for (const source of ["|", "| ", "| |"]) {
+  const session = createSession({ streaming: true });
+  assert.deepEqual(session.append(source).blocks, [], source);
+  assert.equal(session.finish().blocks.map(b => b.html).join(""), mdToHtml(source), source);
+  session.close();
+}
+const afterText = createSession({ streaming: true });
+assert.equal(afterText.append("text\n\n|").blocks.map(b => b.html).join(""), "<p>text</p>\n");
+afterText.close();
+for (const source of ["text\n| a | b |", "a | b\n---|---"]) {
   const session = createSession({ streaming: true });
   assert.equal(session.append(source).blocks.map(b => b.html).join(""), mdToHtml(source), source);
   session.close();
