@@ -197,7 +197,7 @@ export function setCodeHighlighter(highlighter: CodeHighlighter): void;
  * @param {"fast" | "small" | URL | Uint8Array | ArrayBuffer | Response | Promise<Response> | string | undefined} wasm The wasm module.
  * @returns {Promise<void>}
  */
-export async function init(
+export function init(
   wasm?: "fast" | "small" | URL | Uint8Array | ArrayBuffer | Response | Promise<Response> | string,
 ): Promise<void>;
 
@@ -230,7 +230,7 @@ export interface SessionUpdate {
   finishedIds: string[];
 }
 
-export function createSession(options?: Options & { streaming?: boolean }): {
+export function createSession(options?: Options & { streaming?: boolean; rules?: MarkdownRule[] }): {
   append(input: string | Uint8Array): SessionUpdate;
   update(fullAppendOnlyText: string | Uint8Array): SessionUpdate;
   edit(fromByte: number, replacementTail: string | Uint8Array): SessionUpdate;
@@ -238,3 +238,8 @@ export function createSession(options?: Options & { streaming?: boolean }): {
   finish(): SessionUpdate;
   close(): void;
 };
+
+export type MarkdownRule =
+  | { tag: string; open: string; close: string; parsed?: boolean }
+  | { tag: string; prefix: string }
+  | { tag: string; fence: string };

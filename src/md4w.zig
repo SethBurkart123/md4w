@@ -3,6 +3,8 @@ const c = @cImport({
     @cInclude("session.h");
 });
 
+const rule_spec = @import("rules.zig");
+const Rule = rule_spec.Rule;
 const allocator = std.heap.wasm_allocator;
 
 // js functions
@@ -35,8 +37,13 @@ const slugCharMap = [256]u8{
 
 /// The writer handles the output of the md4c parser
 const Writer = struct {
+    rules: []const Rule = &.{},
+    missing_close_end: [64]usize = [_]usize{0} ** 64,
+    missing_close_start: [64]usize = [_]usize{0} ** 64,
+    link_depth: usize = 0,
     blocks: bool = false,
     boundary: u32 = 0,
+    proof: u32 = 0,
     definitions: bool = false,
     buf: []u8 = undefined,
     len: usize = 0,
@@ -92,10 +99,17 @@ const Writer = struct {
         self.len += chunk.len;
     }
     pub fn writeNumber(self: *Writer, number: anytype) void {
-        var buffer: [4]u8 = undefined;
+        var buffer: [20]u8 = undefined;
         const buf = buffer[0..];
         self.write(std.fmt.bufPrintIntToSlice(buf, number, 10, .lower, .{}));
     }
+    fn writeListStart(self: *Writer, start: usize) void {
+        // Preserve the four-digit list starts emitted by the original renderer.
+        var prefix = start;
+        while (prefix >= 10000) prefix /= 10;
+        self.writeNumber(prefix);
+    }
+
     fn safeWriteChar(self: *Writer, ch: u8) void {
         switch (ch) {
             '<' => self.write("&lt;"),
@@ -223,7 +237,7 @@ const HTMLRenderer = struct {
                 const ol: *c.MD_BLOCK_OL_DETAIL = @ptrCast(@alignCast(detail));
                 if (ol.start > 1) {
                     w.write("<ol start=\"");
-                    w.writeNumber(@as(usize, @intCast(ol.start)));
+                    w.writeListStart(@intCast(ol.start));
                     w.write("\">\n");
                 } else {
                     w.write("<ol>\n");
@@ -369,6 +383,8 @@ const HTMLRenderer = struct {
             c.MD_SPAN_EM => w.write("<em>"),
             c.MD_SPAN_STRONG => w.write("<strong>"),
             c.MD_SPAN_A => {
+                w.link_depth += 1;
+                if (w.link_depth > 1) return 0;
                 const a: *c.MD_SPAN_A_DETAIL = @ptrCast(@alignCast(detail));
                 w.write("<a href=\"");
                 w.safeWriteUrl(@as([*]const u8, @ptrCast(a.href.text))[0..a.href.size]);
@@ -416,7 +432,10 @@ const HTMLRenderer = struct {
         switch (typ) {
             c.MD_SPAN_EM => w.write("</em>"),
             c.MD_SPAN_STRONG => w.write("</strong>"),
-            c.MD_SPAN_A => w.write("</a>"),
+            c.MD_SPAN_A => {
+                w.link_depth -= 1;
+                if (w.link_depth == 0) w.write("</a>");
+            },
             c.MD_SPAN_IMG => {
                 const img: *c.MD_SPAN_IMG_DETAIL = @ptrCast(@alignCast(detail));
                 if (img.title.size > 0) {
@@ -449,13 +468,14 @@ const HTMLRenderer = struct {
             while (i < len) {
                 const textContent = @as([*]const u8, @ptrCast(ptr));
                 const ch = textContent[i];
-                const code_point_len: u3 = switch (ch) {
-                    0b0000_0000...0b0111_1111 => 1,
-                    0b1100_0000...0b1101_1111 => 2,
-                    0b1110_0000...0b1110_1111 => 3,
-                    0b1111_0000...0b1111_0111 => 4,
-                    else => unreachable,
-                };
+                const code_point_len = std.unicode.utf8ByteSequenceLength(ch) catch 0;
+                if (code_point_len == 0 or code_point_len > len - i or
+                    !std.unicode.utf8ValidateSlice(textContent[i .. i + code_point_len]))
+                {
+                    w.updateSlug('-');
+                    i += 1;
+                    continue;
+                }
                 if (code_point_len == 1) {
                     w.updateSlug(slugCharMap[ch]);
                 } else {
@@ -514,7 +534,7 @@ const JOSNRenderer = struct {
                 if (ol.start > 1) {
                     w.writeJSONProps();
                     w.write("\"start\":");
-                    w.writeNumber(@as(usize, @intCast(ol.start)));
+                    w.writeListStart(@intCast(ol.start));
                     w.writeByte('}');
                 }
                 w.writeJSONChildren();
@@ -734,6 +754,59 @@ export fn allocMem(length: u32) u64 {
     }));
 }
 
+export fn md4w_rule_chars(w: *Writer, map: [*]u8) void {
+    for (w.rules) |rule| {
+        if (rule.open.len > 0) map[rule.open[0]] = 1;
+    }
+}
+
+export fn md4w_match(w: *Writer, kind: c_int, ptr: [*]const u8, len: usize, matched: *u32) c_int {
+    const text = ptr[0..len];
+    for (w.rules, 0..) |rule, i| {
+        const token = switch (kind) {
+            0 => rule.open,
+            1 => rule.prefix,
+            else => rule.fence,
+        };
+        if (token.len == 0 or !std.mem.startsWith(u8, text, token)) continue;
+        if (kind == 2 and token.len != len) continue;
+        if (kind == 0) {
+            const start = @intFromPtr(ptr);
+            const end = start + len;
+            if (start >= w.missing_close_start[i] and end <= w.missing_close_end[i]) continue;
+            const index = std.mem.indexOfPos(u8, text, token.len, rule.close) orelse {
+                w.missing_close_start[i] = start;
+                w.missing_close_end[i] = end;
+                continue;
+            };
+            matched.* = index + rule.close.len;
+        } else matched.* = token.len;
+        return @intCast(i);
+    }
+    return -1;
+}
+
+export fn md4w_inner(w: *Writer, id: c_int, _: [*]const u8, _: usize, left: *u32, right: *u32) c_int {
+    const rule = w.rules[@intCast(id)];
+    left.* = rule.open.len;
+    right.* = rule.close.len;
+    return @intFromBool(rule.parsed);
+}
+
+export fn md4w_tag(w: *Writer, id: c_int, start: u32, end: u32, closing: c_int) void {
+    if (w.image_nesting_level > 0) return;
+    w.write(if (closing != 0) "</x-" else "<x-");
+    w.write(w.rules[@intCast(id)].tag);
+    if (closing == 0) {
+        w.write(" data-start=\"");
+        w.writeNumber(start);
+        w.write("\" data-end=\"");
+        w.writeNumber(end);
+        w.write("\"");
+    }
+    w.write(">");
+}
+
 export fn md4w_block(writer: *Writer, offset: u32) void {
     if (writer.blocks) {
         writer.flush();
@@ -741,12 +814,18 @@ export fn md4w_block(writer: *Writer, offset: u32) void {
     }
 }
 
-export fn md4w_boundary(userdata: *Writer, offset: u32) void {
+export fn md4w_boundary(userdata: *Writer, offset: u32, proof: u32) void {
     userdata.boundary = offset;
+    userdata.proof = proof;
 }
 
 export fn md4w_definitions(userdata: *Writer) void {
     userdata.definitions = true;
+}
+
+var last_proof: u32 = 0;
+export fn boundaryProof() u32 {
+    return last_proof;
 }
 
 var last_boundary: u64 = 0;
@@ -760,18 +839,35 @@ export fn render(ptr_len: u64, flags: usize, buffer_size: usize, has_code_highli
     const md = toSlice(ptr_len);
     defer allocator.free(md);
 
-    return renderDocument(md, flags, buffer_size, has_code_highlighter, output_type, null, 0);
+    return renderDocument(md, flags, buffer_size, has_code_highlighter, output_type, null, 0, &.{});
 }
 
 const Session = struct {
     source: std.ArrayList(u8),
     cache: *c.MD4W_SESSION,
+    rules: ?std.json.Parsed([]Rule) = null,
 };
 
 export fn openSession() *Session {
     const session = allocator.create(Session) catch unreachable;
     session.* = .{ .source = std.ArrayList(u8).init(allocator), .cache = c.md4w_open().? };
     return session;
+}
+
+export fn setRules(session: *Session, ptr_len: u64) bool {
+    const bytes = toSlice(ptr_len);
+    defer allocator.free(bytes);
+    const parsed = std.json.parseFromSlice([]Rule, allocator, bytes, .{ .allocate = .alloc_always }) catch return false;
+    if (parsed.value.len <= 64) {
+        for (parsed.value) |rule| {
+            if (!rule_spec.valid(rule)) break;
+        } else {
+            session.rules = parsed;
+            return true;
+        }
+    }
+    parsed.deinit();
+    return false;
 }
 
 export fn resizeSource(session: *Session, length: usize) [*]u8 {
@@ -782,15 +878,15 @@ export fn resizeSource(session: *Session, length: usize) [*]u8 {
 export fn closeSession(session: *Session) void {
     c.md4w_close(session.cache);
     session.source.deinit();
+    if (session.rules) |rules| rules.deinit();
     allocator.destroy(session);
 }
 
 export fn renderSession(session: *Session, start: u32, flags: u32, highlight: u32) u64 {
-    return renderDocument(session.source.items, flags, 4096, highlight, 3, session.cache, start);
+    return renderDocument(session.source.items, flags, 4096, highlight, 3, session.cache, start, if (session.rules) |r| r.value else &.{});
 }
 
-fn renderDocument(md: []const u8, flags: usize, buffer_size: usize, has_code_highlighter: usize,
-    output_type: usize, cache: ?*c.MD4W_SESSION, start: u32) u64 {
+fn renderDocument(md: []const u8, flags: usize, buffer_size: usize, has_code_highlighter: usize, output_type: usize, cache: ?*c.MD4W_SESSION, start: u32, rules: []const Rule) u64 {
     // todo: use global writer
     var writer = Writer.init(buffer_size, has_code_highlighter > 0);
     defer writer.deinit();
@@ -807,6 +903,7 @@ fn renderDocument(md: []const u8, flags: usize, buffer_size: usize, has_code_hig
         .syntax = null,
     };
 
+    writer.rules = rules;
     writer.boundary = start;
     writer.blocks = output_type == 3;
     const output_json = output_type == 2;
@@ -827,7 +924,8 @@ fn renderDocument(md: []const u8, flags: usize, buffer_size: usize, has_code_hig
         @intCast(md.len),
         &parser,
         @ptrFromInt(@intFromPtr(&writer)),
-        cache, start,
+        cache,
+        start,
     );
 
     if (output_json) {
@@ -835,6 +933,7 @@ fn renderDocument(md: []const u8, flags: usize, buffer_size: usize, has_code_hig
         writer.writeByte(']');
     }
 
+    last_proof = writer.proof;
     last_boundary = @as(u64, @intFromBool(writer.definitions)) << 32 | writer.boundary;
 
     if (status < 0) unreachable;

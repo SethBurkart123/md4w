@@ -280,3 +280,40 @@ try {
 Set `streaming: true` to render provisional inline spans in the unfinished
 tail. Call `session.finish()` when input ends and apply its update to restore
 ordinary Markdown interpretation.
+
+### Declarative rules
+
+Pass `rules` when creating the session. The first matching rule wins. Inline
+delimiters pair within a line, with raw escaped content by default; set
+`parsed: true` for Markdown inside. Prefix rules consume one line. Fence rules
+match the language and keep escaped literal content. Elements have UTF-8 source
+offsets in `data-start` and `data-end`. Tag names start with a lowercase ASCII
+letter and can contain lowercase letters, digits and hyphens.
+
+```js
+createSession({ rules: [
+  { open: "{{", close: "}}", tag: "value" },
+  { open: "^^", close: "^^", tag: "note", parsed: true },
+  { prefix: "::video ", tag: "video" },
+  { fence: "tikz", tag: "diagram" },
+] });
+```
+
+### Build and verify
+
+Use Zig 0.11.0 and Node.js 22. From the repository root run:
+
+```sh
+git submodule update --init --recursive
+zig build -j2
+for suite in boundary blocks session streaming rules; do node "test/$suite.mjs" || exit 1; done
+baseline=$(mktemp -d)
+npm pack md4w@0.2.7 --ignore-scripts --pack-destination "$baseline"
+tar -xzf "$baseline/md4w-0.2.7.tgz" -C "$baseline"
+node test/spec-parity.mjs "$baseline/package"
+```
+
+Import `js/md4w.js` and initialize it with
+`initWasm(await WebAssembly.compileStreaming(fetch(wasmUrl)))`.
+Use `js/md4w-small.wasm` for browsers. The Fast build is available as
+`js/md4w-fast.wasm`.

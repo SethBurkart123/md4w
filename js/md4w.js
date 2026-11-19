@@ -281,9 +281,15 @@ export function parseBlocks(input, options) {
 
 export function createSession(options = {}) {
   const instance = wasm;
+  const rules = options.rules && enc.encode(JSON.stringify(options.rules));
   let handle = instance.openSession();
+  if (rules && !instance.setRules(handle, allocMem(rules))) {
+    instance.closeSession(handle);
+    throw new TypeError("Invalid markdown rule table");
+  }
   let length = 0;
   let boundary = 0;
+  let proof = 0;
   let stringLength = 0;
   let highSurrogate = "";
   const flags = validateParseFlags(options.parseFlags);
@@ -296,7 +302,7 @@ export function createSession(options = {}) {
     length = from + bytes.length;
     const ptr = instance.resizeSource(handle, length);
     if (bytes.length) new Uint8Array(instance.memory.buffer, ptr + from, bytes.length).set(bytes);
-    let replaceFrom = boundary <= from ? boundary : 0;
+    let replaceFrom = proof <= from ? boundary : 0;
     const render = () => collectOutput(3, Math.max(256, length - replaceFrom), () =>
       instance.renderSession(handle, replaceFrom, streaming ? flags | 0x10000000 : flags, typeof highlighter === "function" ? 1 : 0));
     let blocks = render();
@@ -307,6 +313,7 @@ export function createSession(options = {}) {
     }
     const result = instance.parseBoundary();
     boundary = Number(result & 0xffffffffn);
+    proof = instance.boundaryProof() || (replaceFrom ? proof : 0);
     return { replaceFrom, finishedBytes: boundary, definitionsSeen: rebuild || result >> 32n !== 0n,
       blocks, finishedIds: blocks.filter(b => b.offset < boundary).map(b => b.id) };
   }
@@ -346,7 +353,7 @@ export function createSession(options = {}) {
       return write(input, from);
     },
     reset(input) {
-      length = boundary = stringLength = 0;
+      length = boundary = proof = stringLength = 0;
       highSurrogate = "";
       return append(input);
     },
