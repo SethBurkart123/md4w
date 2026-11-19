@@ -534,7 +534,7 @@
          MD_CHECK(md_end_current_block(ctx));
  
          /* Add our single-line block. */
-@@ -6381,6 +6634,44 @@
+@@ -6381,6 +6634,47 @@
  
  abort:
      return ret;
@@ -546,13 +546,13 @@
 +md4w_table_header(MD_CTX* ctx)
 +{
 +    MD_BLOCK* block = ctx->current_block;
-+    const MD_LINE* lines;
++    MD_LINE* lines;
 +    OFF off, end;
 +
 +    if(!(ctx->parser.flags & MD4W_STREAMING) || !(ctx->parser.flags & MD_FLAG_TABLES) ||
 +       block == NULL || block->type != MD_BLOCK_P || block->n_lines > 2)
 +        return;
-+    lines = (const MD_LINE*) (block + 1);
++    lines = (MD_LINE*) (block + 1);
 +    if(CH(lines[0].beg) != _T('|'))
 +        return;
 +
@@ -569,8 +569,11 @@
 +    }
 +
 +    for(off = lines[0].beg; off < lines[0].end && ISANYOF(off, _T("| \t")); off++);
-+    if(off == lines[0].end)
++    if(off == lines[0].end) {
++        /* Bare pipes stay hidden until a cell shows whether they start a table. */
++        if(block->n_lines == 1) lines[0].end = lines[0].beg;
 +        return;
++    }
 +
 +    /* The block is the last one, so its unfinished delimiter row is the last line pushed. */
 +    ctx->n_block_bytes -= (block->n_lines - 1) * sizeof(MD_LINE);
@@ -579,7 +582,7 @@
  }
  
  static int
-@@ -6389,7 +6680,7 @@
+@@ -6389,7 +6683,7 @@
      const MD_LINE_ANALYSIS* pivot_line = &md_dummy_blank_line;
      MD_LINE_ANALYSIS line_buf[2];
      MD_LINE_ANALYSIS* line = &line_buf[0];
@@ -588,7 +591,7 @@
      int ret = 0;
  
      MD_ENTER_BLOCK(MD_BLOCK_DOC, NULL);
-@@ -6398,12 +6689,15 @@
+@@ -6398,12 +6692,15 @@
          if(line == pivot_line)
              line = (line == &line_buf[0] ? &line_buf[1] : &line_buf[0]);
  
@@ -604,7 +607,7 @@
      MD_CHECK(md_build_ref_def_hashtable(ctx));
  
      /* Process all blocks. */
-@@ -6444,8 +6738,30 @@
+@@ -6444,8 +6741,30 @@
   ***  Public API  ***
   ********************/
  
@@ -636,7 +639,7 @@
  {
      MD_CTX ctx;
      int i;
-@@ -6459,15 +6775,31 @@
+@@ -6459,15 +6778,31 @@
  
      /* Setup context structure. */
      memset(&ctx, 0, sizeof(MD_CTX));
@@ -668,7 +671,7 @@
      /* Reset all mark stacks and lists. */
      for(i = 0; i < (int) SIZEOF_ARRAY(ctx.opener_stacks); i++)
          ctx.opener_stacks[i].top = -1;
-@@ -6480,9 +6812,35 @@
+@@ -6480,9 +6815,35 @@
      /* All the work. */
      ret = md_process_doc(&ctx);
  
@@ -706,7 +709,7 @@
      free(ctx.buffer);
      free(ctx.marks);
      free(ctx.block_bytes);
-@@ -6490,3 +6848,9 @@
+@@ -6490,3 +6851,9 @@
  
      return ret;
  }
