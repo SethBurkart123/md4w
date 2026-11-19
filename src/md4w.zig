@@ -385,6 +385,11 @@ const HTMLRenderer = struct {
             c.MD_SPAN_A => {
                 w.link_depth += 1;
                 if (w.link_depth > 1) return 0;
+                // A streamed half link has no destination yet.
+                if (detail == null) {
+                    w.write("<a>");
+                    return 0;
+                }
                 const a: *c.MD_SPAN_A_DETAIL = @ptrCast(@alignCast(detail));
                 w.write("<a href=\"");
                 w.safeWriteUrl(@as([*]const u8, @ptrCast(a.href.text))[0..a.href.size]);
@@ -839,7 +844,8 @@ export fn render(ptr_len: u64, flags: usize, buffer_size: usize, has_code_highli
     const md = toSlice(ptr_len);
     defer allocator.free(md);
 
-    return renderDocument(md, flags, buffer_size, has_code_highlighter, output_type, null, 0, &.{});
+    // The streaming bit belongs to sessions; only they render half links, and only to HTML.
+    return renderDocument(md, flags & ~@as(usize, 0x10000000), buffer_size, has_code_highlighter, output_type, null, 0, &.{});
 }
 
 const Session = struct {
