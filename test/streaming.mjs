@@ -43,6 +43,7 @@ pending.close();
 for (const [source, expected] of [
   ["`", ""], ["``", ""], ["```js", "<pre><code class=\"language-js\"></code></pre>\n"],
   ["[x][ref", "<p><a>x</a></p>\n"], ["[x][ref] after", "<p><a>x</a> after</p>\n"],
+  ["[a *b][ref] after", "<p><a>a *b</a> after</p>\n"], ["[a `b](https://x", "<p><a>a `b</a></p>\n"],
   ["- [", "<ul>\n<li></li>\n</ul>\n"], ["- [ ", "<ul>\n<li></li>\n</ul>\n"],
   ["- [X", "<ul>\n<li></li>\n</ul>\n"], ["- [x]", mdToHtml("- [x]")],
   ["text -", "<p>text </p>\n"], ["text +", "<p>text </p>\n"],

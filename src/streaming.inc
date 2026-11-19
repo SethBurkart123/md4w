@@ -26,6 +26,21 @@ md4w_hide_tail(MD_CTX* ctx, int i, OFF end)
     m->flags = MD_MARK_RESOLVED;
 }
 
+/* The closer of a half link leaves the link. Its label keeps unclosed delimiters as text, as it will once finished. */
+static CHAR
+md4w_close_label(MD_CTX* ctx, int closer)
+{
+    int opener = ctx->marks[closer].prev, j;
+    if(opener < 0 || ctx->marks[opener].ch != 'A') return 'H';
+    for(j = opener+1; j < closer; j++) {
+        if(ISANYOF2_(ctx->marks[j].ch, 'E', 'R')) {
+            ctx->marks[j].ch = CH(ctx->marks[j].beg);
+            ctx->marks[j].flags = 0;
+        }
+    }
+    return 'a';
+}
+
 static void
 md4w_repair_marks(MD_CTX* ctx, OFF end)
 {
@@ -59,10 +74,10 @@ md4w_repair_marks(MD_CTX* ctx, OFF end)
                 close++;
             }
             m->end = close < end ? close+1 : end;
-            m->ch = ctx->marks[m->prev].ch == 'A' ? 'a' : 'H';
+            m->ch = md4w_close_label(ctx, i);
             m->flags = MD_MARK_RESOLVED;
         } else if(m->ch == ']' && (m->end == end || CH(m->end) == '(')) {
-            m->ch = m->prev >= 0 && ctx->marks[m->prev].ch == 'A' ? 'a' : 'H';
+            m->ch = md4w_close_label(ctx, i);
             m->end = end;
             m->flags = MD_MARK_RESOLVED;
         } else if(m->end == end && ISANYOF_(m->ch, "*_~`$")) {
