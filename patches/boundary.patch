@@ -69,7 +69,7 @@
  static int
  md_collect_marks(MD_CTX* ctx, const MD_LINE* lines, MD_SIZE n_lines, int table_mode)
  {
-@@ -3013,6 +3029,24 @@
+@@ -3013,6 +3029,15 @@
          const MD_LINE* line = &lines[line_index];
          OFF off = line->beg;
  
@@ -82,23 +82,13 @@
 +                continue;
 +            }
 +        }
-+        if(line_index == 1 && n_lines == 2 && CH(lines[0].beg) == '|' &&
-+           md4w_at_tail(ctx, line->end)) {
-+            OFF delimiter = off;
-+            while(delimiter < line->end && ISANYOF(delimiter, "|:- \t")) delimiter++;
-+            if(delimiter == line->end) {
-+                ADD_MARK('H', off, delimiter, MD_MARK_RESOLVED);
-+                continue;
-+            }
-+        }
          while(TRUE) {
              CHAR ch;
  
-@@ -3036,7 +3070,33 @@
+@@ -3036,7 +3061,33 @@
                  break;
  
              ch = CH(off);
--
 +            {
 +                MD_SIZE width;
 +                int rule = md4w_match(ctx->userdata, 0, STR(off), line->end-off, &width);
@@ -109,7 +99,7 @@
 +                    continue;
 +                }
 +            }
-+
+ 
 +            if((ctx->parser.flags & MD4W_STREAMING) && ISANYOF_(ch, "-+=") &&
 +               (off == line->beg || ISBLANK(off-1))) {
 +                OFF run = off+1;
@@ -129,7 +119,7 @@
              /* A backslash escape.
               * It can go beyond line->end as it may involve escaped new
               * line to form a hard break. */
-@@ -3077,6 +3137,9 @@
+@@ -3077,6 +3128,9 @@
                      right_level = 0;
                  }
  
@@ -139,7 +129,7 @@
                  if(left_level != 0  ||  right_level != 0) {
                      unsigned flags = 0;
  
-@@ -3136,6 +3199,8 @@
+@@ -3136,6 +3190,8 @@
                      continue;
                  }
  
@@ -148,7 +138,7 @@
                  off = opener.end;
                  continue;
              }
-@@ -4205,6 +4270,8 @@
+@@ -4205,6 +4261,8 @@
  
  
  /* Render the output, accordingly to the analyzed ctx->marks. */
@@ -157,7 +147,7 @@
  static int
  md_process_inlines(MD_CTX* ctx, const MD_LINE* lines, MD_SIZE n_lines)
  {
-@@ -4215,6 +4282,7 @@
+@@ -4215,6 +4273,7 @@
      OFF off = lines[0].beg;
      OFF end = lines[n_lines-1].end;
      OFF tmp;
@@ -165,7 +155,7 @@
      int enforce_hardbreak = 0;
      int ret = 0;
  
-@@ -4421,8 +4489,52 @@
+@@ -4421,8 +4480,52 @@
                      MD_TEXT(MD_TEXT_NULLCHAR, _T(""), 1);
                      break;
  
@@ -219,7 +209,7 @@
              }
  
              off = mark->end;
-@@ -4491,6 +4603,21 @@
+@@ -4491,6 +4594,21 @@
          }
      }
  
@@ -241,7 +231,58 @@
  abort:
      return ret;
  }
-@@ -4656,8 +4783,11 @@
+@@ -4610,13 +4728,34 @@
+ static int
+ md_process_table_block_contents(MD_CTX* ctx, int col_count, const MD_LINE* lines, MD_SIZE n_lines)
+ {
+-    MD_ALIGN* align;
++    MD_ALIGN* align = NULL;
+     MD_SIZE line_index;
+     int ret = 0;
+ 
+-    /* At least two lines have to be present: The column headers and the line
+-     * with the underlines. */
+-    MD_ASSERT(n_lines >= 2);
++    /* The column headers, then the line with the underlines unless a streamed
++     * header is still waiting for it. */
++    MD_ASSERT(n_lines >= 1);
++
++    /* Without the underline, the header has as many columns as it has cells. */
++    if(n_lines == 1) {
++        OFF cell_beg = lines[0].beg;
++        int i;
++
++        MD_CHECK(md_analyze_inlines(ctx, lines, 1, TRUE));
++        col_count = 0;
++        for(i = ctx->table_cell_boundaries_head; ; i = ctx->marks[i].next) {
++            OFF cell_end = (i >= 0 ? ctx->marks[i].end : lines[0].end + 1);
++            if(cell_beg < cell_end - 1)
++                col_count++;
++            if(i < 0)
++                break;
++            cell_beg = cell_end;
++        }
++        if(col_count > TABLE_MAXCOLCOUNT)
++            col_count = TABLE_MAXCOLCOUNT;
++        ctx->table_cell_boundaries_head = -1;
++        ctx->table_cell_boundaries_tail = -1;
++    }
+ 
+     align = malloc(col_count * sizeof(MD_ALIGN));
+     if(align == NULL) {
+@@ -4625,7 +4764,10 @@
+         goto abort;
+     }
+ 
+-    md_analyze_table_alignment(ctx, lines[1].beg, lines[1].end, align, col_count);
++    if(n_lines > 1)
++        md_analyze_table_alignment(ctx, lines[1].beg, lines[1].end, align, col_count);
++    else
++        memset(align, 0, col_count * sizeof(MD_ALIGN));
+ 
+     MD_ENTER_BLOCK(MD_BLOCK_THEAD, NULL);
+     MD_CHECK(md_process_table_row(ctx, MD_BLOCK_TH,
+@@ -4656,8 +4798,11 @@
  #define MD_BLOCK_CONTAINER          (MD_BLOCK_CONTAINER_OPENER | MD_BLOCK_CONTAINER_CLOSER)
  #define MD_BLOCK_LOOSE_LIST         0x04
  #define MD_BLOCK_SETEXT_HEADER      0x08
@@ -253,7 +294,7 @@
      MD_BLOCKTYPE type  :  8;
      unsigned flags     :  8;
  
-@@ -4694,6 +4824,7 @@
+@@ -4694,6 +4839,7 @@
      int ret;
  
      MD_CHECK(md_analyze_inlines(ctx, lines, n_lines, FALSE));
@@ -261,7 +302,7 @@
      MD_CHECK(md_process_inlines(ctx, lines, n_lines));
  
  abort:
-@@ -4706,6 +4837,39 @@
+@@ -4706,6 +4852,39 @@
  }
  
  static int
@@ -301,7 +342,7 @@
  md_process_verbatim_block_contents(MD_CTX* ctx, MD_TEXTTYPE text_type, const MD_VERBATIMLINE* lines, MD_SIZE n_lines)
  {
      static const CHAR indent_chunk_str[] = _T("                ");
-@@ -4745,6 +4909,12 @@
+@@ -4745,6 +4924,12 @@
      if(is_fenced) {
          /* Skip the first line in case of fenced code: It is the fence.
           * (Only the starting fence is present due to logic in md_analyze_line().) */
@@ -314,7 +355,7 @@
          lines++;
          n_lines--;
      } else {
-@@ -4847,6 +5017,25 @@
+@@ -4847,6 +5032,25 @@
              break;
      }
  
@@ -340,30 +381,30 @@
      if(!is_in_tight_list  ||  block->type != MD_BLOCK_P)
          MD_ENTER_BLOCK(block->type, (void*) &det);
  
-@@ -4887,6 +5076,8 @@
-     }
+@@ -4888,6 +5092,8 @@
      return ret;
  }
-+
-+extern void md4w_block(void* userdata, MD_SIZE offset);
  
++extern void md4w_block(void* userdata, MD_SIZE offset);
++
  static int
  md_process_all_blocks(MD_CTX* ctx)
-@@ -4907,6 +5098,13 @@
-             MD_BLOCK_OL_DETAIL ol;
+ {
+@@ -4908,6 +5114,13 @@
              MD_BLOCK_LI_DETAIL li;
          } det;
-+
+ 
 +        if(ctx->n_containers == 0 && !(block->flags & MD_BLOCK_CONTAINER_CLOSER))
 +        {
 +            md4w_block(ctx->userdata, block->source_start);
 +            if(block->source_start >= ctx->boundary && ctx->prefix_cost == (unsigned)-1)
 +                ctx->prefix_cost = ctx->budget_at_start - ctx->max_ref_def_output;
 +        }
- 
++
          switch(block->type) {
              case MD_BLOCK_UL:
-@@ -5018,6 +5216,8 @@
+                 det.ul.is_tight = (block->flags & MD_BLOCK_LOOSE_LIST) ? FALSE : TRUE;
+@@ -5018,6 +5231,8 @@
      if(block == NULL)
          return -1;
  
@@ -372,7 +413,7 @@
      switch(line->type) {
          case MD_LINE_HR:
              block->type = MD_BLOCK_HR;
-@@ -5033,6 +5233,7 @@
+@@ -5033,6 +5248,7 @@
              block->type = MD_BLOCK_CODE;
              break;
  
@@ -380,7 +421,7 @@
          case MD_LINE_TEXT:
              block->type = MD_BLOCK_P;
              break;
-@@ -5049,7 +5250,7 @@
+@@ -5049,7 +5265,7 @@
              break;
      }
  
@@ -389,7 +430,7 @@
      block->data = line->data;
      block->n_lines = 0;
  
-@@ -5119,7 +5320,7 @@
+@@ -5119,7 +5335,7 @@
      /* Check whether there is a reference definition. (We do this here instead
       * of in md_analyze_line() because reference definition can take multiple
       * lines.) */
@@ -398,7 +439,7 @@
         (ctx->current_block->type == MD_BLOCK_H  &&  (ctx->current_block->flags & MD_BLOCK_SETEXT_HEADER)))
      {
          MD_LINE* lines = (MD_LINE*) (ctx->current_block + 1);
-@@ -5195,6 +5396,8 @@
+@@ -5195,6 +5411,8 @@
      if(block == NULL)
          return -1;
  
@@ -407,17 +448,17 @@
      block->type = type;
      block->flags = flags;
      block->data = data;
-@@ -5814,6 +6017,9 @@
+@@ -5813,6 +6031,9 @@
+     *p_end = off;
      return indent - total_indent;
  }
- 
++
 +extern void md4w_boundary(void* userdata, MD_SIZE offset, MD_SIZE proof);
 +extern void md4w_definitions(void* userdata);
-+
+ 
  static const MD_LINE_ANALYSIS md_dummy_blank_line = { MD_LINE_BLANK, 0, 0, 0, 0, 0 };
  
- /* Analyze type of the line and find some its properties. This serves as a
-@@ -5885,6 +6091,7 @@
+@@ -5885,6 +6106,7 @@
               * which we transform into MD_LINE_BLANK. */
              if(line->indent < ctx->code_indent_offset) {
                  if(md_is_closing_code_fence(ctx, CH(pivot_line->beg), off, &off)) {
@@ -425,7 +466,20 @@
                      line->type = MD_LINE_BLANK;
                      ctx->last_line_has_list_loosening_effect = FALSE;
                      break;
-@@ -6197,6 +6404,11 @@
+@@ -6176,6 +6398,12 @@
+             if(ctx->current_block != NULL  &&  ctx->current_block->n_lines == 1  &&
+                 md_is_table_underline(ctx, off, &off, &col_count))
+             {
++                /* An unfinished delimiter row may still gain columns; md4w_table_header shows the header meanwhile. */
++                if((ctx->parser.flags & MD4W_STREAMING) && off == ctx->size &&
++                   CH(((MD_LINE*)(ctx->current_block+1))[0].beg) == _T('|')) {
++                    line->type = MD_LINE_TEXT;
++                    break;
++                }
+                 line->data = col_count;
+                 line->type = MD_LINE_TABLEUNDERLINE;
+                 break;
+@@ -6197,6 +6425,11 @@
  
              while(tmp < ctx->size  &&  tmp < off + 3  &&  ISBLANK(tmp))
                  tmp++;
@@ -437,7 +491,7 @@
              if(tmp + 2 < ctx->size  &&  CH(tmp) == _T('[')  &&
                 ISANYOF(tmp+1, _T("xX "))  &&  CH(tmp+2) == _T(']')  &&
                 (tmp + 3 == ctx->size  ||  ISBLANK(tmp+3)  ||  ISNEWLINE(tmp+3)))
-@@ -6264,6 +6476,15 @@
+@@ -6264,6 +6497,15 @@
              line->end--;
      }
  
@@ -453,12 +507,10 @@
      /* Eat also the new line. */
      if(off < ctx->size && CH(off) == _T('\r'))
          off++;
-@@ -6279,6 +6500,17 @@
-             MD_BLOCK* block = (MD_BLOCK*) (((char*)ctx->block_bytes) + c->block_byte_off);
-             block->flags |= MD_BLOCK_LOOSE_LIST;
+@@ -6281,6 +6523,17 @@
          }
-+    }
-+
+     }
+ 
 +    /* An append may reclassify the entire final, unterminated line. */
 +    if(off > beg && ISNEWLINE(off-1) && n_parents == 0 && n_brothers == 0) {
 +        if(n_children > 0 || ctx->n_containers > 0 || line->enforce_new_block ||
@@ -468,10 +520,12 @@
 +        if(n_children == 0 && (line->type == MD_LINE_BLANK || line->type == MD_LINE_HR ||
 +                              line->type == MD_LINE_ATXHEADER))
 +            md4w_boundary(ctx->userdata, ctx->boundary = off, off);
-     }
- 
++    }
++
      /* Leave any containers we are not part of anymore. */
-@@ -6324,7 +6556,7 @@
+     if(n_children == 0  &&  n_parents + n_brothers < ctx->n_containers)
+         MD_CHECK(md_leave_child_containers(ctx, n_parents + n_brothers));
+@@ -6324,7 +6577,7 @@
          MD_CHECK(md_end_current_block(ctx));
  
      /* Some line types form block on their own. */
@@ -480,7 +534,52 @@
          MD_CHECK(md_end_current_block(ctx));
  
          /* Add our single-line block. */
-@@ -6389,7 +6621,7 @@
+@@ -6381,6 +6634,44 @@
+ 
+ abort:
+     return ret;
++}
++
++/* A streamed paragraph made of a pipe row, and perhaps the start of its
++ * delimiter row, shows as the table header it is about to become. */
++static void
++md4w_table_header(MD_CTX* ctx)
++{
++    MD_BLOCK* block = ctx->current_block;
++    const MD_LINE* lines;
++    OFF off, end;
++
++    if(!(ctx->parser.flags & MD4W_STREAMING) || !(ctx->parser.flags & MD_FLAG_TABLES) ||
++       block == NULL || block->type != MD_BLOCK_P || block->n_lines > 2)
++        return;
++    lines = (const MD_LINE*) (block + 1);
++    if(CH(lines[0].beg) != _T('|'))
++        return;
++
++    end = lines[block->n_lines-1].end;
++    while(end < ctx->size && ISWHITESPACE(end)) end++;
++    if(end < ctx->size && ISNEWLINE(end)) end++;
++    if(end != ctx->size)
++        return;
++
++    if(block->n_lines == 2) {
++        for(off = lines[1].beg; off < lines[1].end; off++)
++            if(!ISANYOF(off, _T("|:- \t")))
++                return;
++    }
++
++    for(off = lines[0].beg; off < lines[0].end && ISANYOF(off, _T("| \t")); off++);
++    if(off == lines[0].end)
++        return;
++
++    /* The block is the last one, so its unfinished delimiter row is the last line pushed. */
++    ctx->n_block_bytes -= (block->n_lines - 1) * sizeof(MD_LINE);
++    block->n_lines = 1;
++    block->type = MD_BLOCK_TABLE;
+ }
+ 
+ static int
+@@ -6389,7 +6680,7 @@
      const MD_LINE_ANALYSIS* pivot_line = &md_dummy_blank_line;
      MD_LINE_ANALYSIS line_buf[2];
      MD_LINE_ANALYSIS* line = &line_buf[0];
@@ -489,7 +588,7 @@
      int ret = 0;
  
      MD_ENTER_BLOCK(MD_BLOCK_DOC, NULL);
-@@ -6398,12 +6630,14 @@
+@@ -6398,12 +6689,15 @@
          if(line == pivot_line)
              line = (line == &line_buf[0] ? &line_buf[1] : &line_buf[0]);
  
@@ -498,13 +597,14 @@
          MD_CHECK(md_process_line(ctx, &pivot_line, line));
      }
  
++    md4w_table_header(ctx);
      md_end_current_block(ctx);
  
 +    if(ctx->n_ref_defs > 0) md4w_definitions(ctx->userdata);
      MD_CHECK(md_build_ref_def_hashtable(ctx));
  
      /* Process all blocks. */
-@@ -6444,8 +6678,30 @@
+@@ -6444,8 +6738,30 @@
   ***  Public API  ***
   ********************/
  
@@ -536,7 +636,7 @@
  {
      MD_CTX ctx;
      int i;
-@@ -6459,14 +6715,30 @@
+@@ -6459,15 +6775,31 @@
  
      /* Setup context structure. */
      memset(&ctx, 0, sizeof(MD_CTX));
@@ -553,7 +653,7 @@
 +        ctx.mark_char_map['-'] = ctx.mark_char_map['+'] = ctx.mark_char_map['='] = 1;
      ctx.doc_ends_with_newline = (size > 0  &&  ISNEWLINE_(text[size-1]));
      ctx.max_ref_def_output = MIN(MIN(16 * (uint64_t)size, (uint64_t)(1024 * 1024)), (uint64_t)SZ_MAX);
-+
+ 
 +    if(session) {
 +        if(start && (session->provisional || (session->exhausted && ctx.max_ref_def_output != session->budget)))
 +            return 1;
@@ -564,14 +664,16 @@
 +        ctx.budget_at_start = ctx.max_ref_def_output;
 +        ctx.max_ref_def_output -= MIN(ctx.max_ref_def_output, session->prefix_cost);
 +    }
- 
++
      /* Reset all mark stacks and lists. */
      for(i = 0; i < (int) SIZEOF_ARRAY(ctx.opener_stacks); i++)
-@@ -6480,9 +6752,35 @@
+         ctx.opener_stacks[i].top = -1;
+@@ -6480,9 +6812,35 @@
      /* All the work. */
      ret = md_process_doc(&ctx);
  
 -    /* Clean-up. */
+-    md_free_ref_defs(&ctx);
 +    if(session && ret == 0) {
 +        if(start && ctx.n_ref_defs) {
 +            ret = 1;
@@ -599,13 +701,12 @@
 +    }
 +
 +cleanup:
-+    md_free_ref_def_hashtable(&ctx);
-     md_free_ref_defs(&ctx);
--    md_free_ref_def_hashtable(&ctx);
+     md_free_ref_def_hashtable(&ctx);
++    md_free_ref_defs(&ctx);
      free(ctx.buffer);
      free(ctx.marks);
      free(ctx.block_bytes);
-@@ -6490,3 +6788,9 @@
+@@ -6490,3 +6848,9 @@
  
      return ret;
  }
