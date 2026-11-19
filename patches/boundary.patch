@@ -1,6 +1,15 @@
 --- md4c.c
 +++ md4c.c
-@@ -180,6 +180,14 @@
+@@ -23,7 +23,7 @@
+  * IN THE SOFTWARE.
+  */
+ 
+-#include "md4c.h"
++#include "session.h"
+ 
+ #include <limits.h>
+ #include <stdint.h>
+@@ -180,6 +180,15 @@
  
      /* Reference definitions. */
      MD_REF_DEF* ref_defs;
@@ -12,10 +21,19 @@
 +    unsigned prefix_cost;
 +    unsigned last_definition_end;
 +    int budget_exhausted;
++    unsigned rule_depth;
      int n_ref_defs;
      int alloc_ref_defs;
      void** ref_def_hashtable;
-@@ -2267,6 +2275,7 @@
+@@ -277,6 +286,7 @@
+     MD_LINE_HTML,
+     MD_LINE_TEXT,
+     MD_LINE_TABLE,
++    MD_LINE_CUSTOM,
+     MD_LINE_TABLEUNDERLINE
+ };
+ typedef enum MD_LINETYPE_tag MD_LINETYPE;
+@@ -2267,6 +2277,7 @@
      def->dest_end = dest_contents_end;
  
      /* Success. */
@@ -23,7 +41,7 @@
      ctx->n_ref_defs++;
      return line_index + 1;
  
-@@ -2311,7 +2320,9 @@
+@@ -2311,7 +2322,9 @@
          label_size = end - beg;
      }
  
@@ -34,7 +52,7 @@
      if(def != NULL) {
          attr->dest_beg = def->dest_beg;
          attr->dest_end = def->dest_end;
-@@ -2332,6 +2343,7 @@
+@@ -2332,6 +2345,7 @@
          } else {
              MD_LOG("Too many link reference definition instantiations.");
              ctx->max_ref_def_output = 0;
@@ -42,7 +60,7 @@
          }
      }
  
-@@ -3000,6 +3012,8 @@
+@@ -3000,6 +3014,8 @@
      return FALSE;
  }
  
@@ -51,7 +69,7 @@
  static int
  md_collect_marks(MD_CTX* ctx, const MD_LINE* lines, MD_SIZE n_lines, int table_mode)
  {
-@@ -3013,6 +3027,15 @@
+@@ -3013,6 +3029,15 @@
          const MD_LINE* line = &lines[line_index];
          OFF off = line->beg;
  
@@ -67,7 +85,24 @@
          while(TRUE) {
              CHAR ch;
  
-@@ -3077,6 +3100,9 @@
+@@ -3036,6 +3061,16 @@
+                 break;
+ 
+             ch = CH(off);
++            {
++                MD_SIZE width;
++                int rule = md4w_match(ctx->userdata, 0, STR(off), line->end-off, &width);
++                if(rule >= 0) {
++                    ADD_MARK('X', off, off+width, MD_MARK_RESOLVED);
++                    mark->prev = rule;
++                    off += width;
++                    continue;
++                }
++            }
+ 
+             /* A backslash escape.
+              * It can go beyond line->end as it may involve escaped new
+@@ -3077,6 +3112,9 @@
                      right_level = 0;
                  }
  
@@ -77,7 +112,7 @@
                  if(left_level != 0  ||  right_level != 0) {
                      unsigned flags = 0;
  
-@@ -3136,10 +3162,18 @@
+@@ -3136,10 +3174,18 @@
                      continue;
                  }
  
@@ -96,7 +131,16 @@
              /* A potential entity start. */
              if(ch == _T('&')) {
                  ADD_MARK(ch, off, off+1, MD_MARK_POTENTIAL_OPENER);
-@@ -4215,6 +4249,7 @@
+@@ -4205,6 +4251,8 @@
+ 
+ 
+ /* Render the output, accordingly to the analyzed ctx->marks. */
++static int md4w_inline_range(MD_CTX*, OFF, OFF);
++
+ static int
+ md_process_inlines(MD_CTX* ctx, const MD_LINE* lines, MD_SIZE n_lines)
+ {
+@@ -4215,6 +4263,7 @@
      OFF off = lines[0].beg;
      OFF end = lines[n_lines-1].end;
      OFF tmp;
@@ -104,10 +148,21 @@
      int enforce_hardbreak = 0;
      int ret = 0;
  
-@@ -4421,8 +4456,39 @@
+@@ -4421,8 +4470,50 @@
                      MD_TEXT(MD_TEXT_NULLCHAR, _T(""), 1);
                      break;
  
++                case 'X': {
++                    MD_SIZE left, right;
++                    int parsed = md4w_inner(ctx->userdata, mark->prev, STR(off), mark->end-off, &left, &right);
++                    md4w_tag(ctx->userdata, mark->prev, off, mark->end, 0);
++                    if(parsed)
++                        MD_CHECK(md4w_inline_range(ctx, off+left, mark->end-right));
++                    else
++                        MD_TEXT(MD_TEXT_NORMAL, STR(off+left), mark->end-off-left-right);
++                    md4w_tag(ctx->userdata, mark->prev, off, mark->end, 1);
++                    break;
++                }
 +                case 'H':
 +                    while(mark->end > line->end) line++;
 +                    break;
@@ -145,7 +200,7 @@
              }
  
              off = mark->end;
-@@ -4491,6 +4557,19 @@
+@@ -4491,6 +4582,19 @@
          }
      }
  
@@ -165,15 +220,19 @@
  abort:
      return ret;
  }
-@@ -4658,6 +4737,7 @@
+@@ -4656,8 +4760,11 @@
+ #define MD_BLOCK_CONTAINER          (MD_BLOCK_CONTAINER_OPENER | MD_BLOCK_CONTAINER_CLOSER)
+ #define MD_BLOCK_LOOSE_LIST         0x04
  #define MD_BLOCK_SETEXT_HEADER      0x08
++#define MD_BLOCK_CUSTOM_LINE        0x10
  
  struct MD_BLOCK_tag {
 +    OFF source_start;
++    OFF fence_end;
      MD_BLOCKTYPE type  :  8;
      unsigned flags     :  8;
  
-@@ -4694,6 +4774,7 @@
+@@ -4694,6 +4801,7 @@
      int ret;
  
      MD_CHECK(md_analyze_inlines(ctx, lines, n_lines, FALSE));
@@ -181,16 +240,82 @@
      MD_CHECK(md_process_inlines(ctx, lines, n_lines));
  
  abort:
-@@ -4888,6 +4969,8 @@
+@@ -4702,6 +4810,39 @@
+         free(md_mark_get_ptr(ctx, i));
+     ctx->ptr_stack.top = -1;
+ 
++    return ret;
++}
++
++static int
++md4w_inline_range(MD_CTX* parent, OFF beg, OFF end)
++{
++    MD_LINE line = { beg, end };
++    MD_CTX ctx = {0};
++    int ret, i;
++    if(beg == end) return 0;
++    if(parent->rule_depth >= 16)
++        return parent->parser.text(MD_TEXT_NORMAL, parent->text+beg, end-beg, parent->userdata);
++    ctx.text = parent->text;
++    ctx.size = end;
++    ctx.parser = parent->parser;
++    ctx.parser.flags &= ~MD4W_STREAMING;
++    ctx.userdata = parent->userdata;
++    ctx.rule_depth = parent->rule_depth + 1;
++    ctx.saved_defs = parent->saved_defs;
++    ctx.ref_defs = parent->ref_defs;
++    ctx.n_ref_defs = parent->n_ref_defs;
++    ctx.ref_def_hashtable = parent->ref_def_hashtable;
++    ctx.ref_def_hashtable_size = parent->ref_def_hashtable_size;
++    ctx.max_ref_def_output = parent->max_ref_def_output;
++    memcpy(ctx.mark_char_map, parent->mark_char_map, sizeof(ctx.mark_char_map));
++    for(i = 0; i < (int)SIZEOF_ARRAY(ctx.opener_stacks); i++) ctx.opener_stacks[i].top = -1;
++    ctx.ptr_stack.top = ctx.unresolved_link_head = ctx.unresolved_link_tail = -1;
++    ctx.table_cell_boundaries_head = -1;
++    ret = md_process_normal_block_contents(&ctx, &line, 1);
++    parent->max_ref_def_output = ctx.max_ref_def_output;
++    parent->budget_exhausted |= ctx.budget_exhausted;
++    free(ctx.marks);
++    free(ctx.buffer);
      return ret;
  }
  
-+extern void md4w_block(void* userdata, MD_SIZE offset);
+@@ -4847,6 +4988,25 @@
+             break;
+     }
+ 
++    if(block->flags & MD_BLOCK_CUSTOM_LINE) {
++        const MD_LINE* l = (const MD_LINE*)(block+1);
++        md4w_tag(ctx->userdata, block->data, block->source_start, l->end, 0);
++        MD_TEXT(MD_TEXT_NORMAL, STR(l->beg), l->end-l->beg);
++        md4w_tag(ctx->userdata, block->data, block->source_start, l->end, 1);
++        goto abort;
++    }
++    if(clean_fence_code_detail) {
++        MD_SIZE width;
++        int rule = md4w_match(ctx->userdata, 2, det.code.lang.text, det.code.lang.size, &width);
++        if(rule >= 0) {
++            const MD_VERBATIMLINE* l = (const MD_VERBATIMLINE*)(block+1);
++            OFF end = block->fence_end ? block->fence_end : l[block->n_lines-1].end;
++            md4w_tag(ctx->userdata, rule, block->source_start, end, 0);
++            MD_CHECK(md_process_code_block_contents(ctx, TRUE, l, block->n_lines));
++            md4w_tag(ctx->userdata, rule, block->source_start, end, 1);
++            goto abort;
++        }
++    }
+     if(!is_in_tight_list  ||  block->type != MD_BLOCK_P)
+         MD_ENTER_BLOCK(block->type, (void*) &det);
+ 
+@@ -4887,6 +5047,8 @@
+     }
+     return ret;
+ }
 +
++extern void md4w_block(void* userdata, MD_SIZE offset);
+ 
  static int
  md_process_all_blocks(MD_CTX* ctx)
- {
-@@ -4907,6 +4990,13 @@
+@@ -4907,6 +5069,13 @@
              MD_BLOCK_OL_DETAIL ol;
              MD_BLOCK_LI_DETAIL li;
          } det;
@@ -204,36 +329,90 @@
  
          switch(block->type) {
              case MD_BLOCK_UL:
-@@ -5018,6 +5108,7 @@
+@@ -5018,6 +5187,8 @@
      if(block == NULL)
          return -1;
  
 +    block->source_start = ctx->source_line;
++    block->fence_end = 0;
      switch(line->type) {
          case MD_LINE_HR:
              block->type = MD_BLOCK_HR;
-@@ -5195,6 +5286,7 @@
+@@ -5033,6 +5204,7 @@
+             block->type = MD_BLOCK_CODE;
+             break;
+ 
++        case MD_LINE_CUSTOM:
+         case MD_LINE_TEXT:
+             block->type = MD_BLOCK_P;
+             break;
+@@ -5049,7 +5221,7 @@
+             break;
+     }
+ 
+-    block->flags = 0;
++    block->flags = line->type == MD_LINE_CUSTOM ? MD_BLOCK_CUSTOM_LINE : 0;
+     block->data = line->data;
+     block->n_lines = 0;
+ 
+@@ -5119,7 +5291,7 @@
+     /* Check whether there is a reference definition. (We do this here instead
+      * of in md_analyze_line() because reference definition can take multiple
+      * lines.) */
+-    if(ctx->current_block->type == MD_BLOCK_P  ||
++    if((ctx->current_block->type == MD_BLOCK_P && !(ctx->current_block->flags & MD_BLOCK_CUSTOM_LINE))  ||
+        (ctx->current_block->type == MD_BLOCK_H  &&  (ctx->current_block->flags & MD_BLOCK_SETEXT_HEADER)))
+     {
+         MD_LINE* lines = (MD_LINE*) (ctx->current_block + 1);
+@@ -5195,6 +5367,8 @@
      if(block == NULL)
          return -1;
  
 +    block->source_start = ctx->source_line;
++    block->fence_end = 0;
      block->type = type;
      block->flags = flags;
      block->data = data;
-@@ -5813,6 +5905,9 @@
-     *p_end = off;
+@@ -5814,6 +5988,9 @@
      return indent - total_indent;
  }
-+
+ 
 +extern void md4w_boundary(void* userdata, MD_SIZE offset);
 +extern void md4w_definitions(void* userdata);
- 
++
  static const MD_LINE_ANALYSIS md_dummy_blank_line = { MD_LINE_BLANK, 0, 0, 0, 0, 0 };
  
-@@ -6281,6 +6376,17 @@
-         }
+ /* Analyze type of the line and find some its properties. This serves as a
+@@ -5885,6 +6062,7 @@
+              * which we transform into MD_LINE_BLANK. */
+             if(line->indent < ctx->code_indent_offset) {
+                 if(md_is_closing_code_fence(ctx, CH(pivot_line->beg), off, &off)) {
++                    if(ctx->current_block) ctx->current_block->fence_end = off;
+                     line->type = MD_LINE_BLANK;
+                     ctx->last_line_has_list_loosening_effect = FALSE;
+                     break;
+@@ -6264,6 +6442,15 @@
+             line->end--;
      }
  
++    if(line->type == MD_LINE_TEXT && line->end > line->beg) {
++        MD_SIZE width;
++        int rule = md4w_match(ctx->userdata, 1, STR(line->beg), line->end-line->beg, &width);
++        if(rule >= 0) {
++            line->type = MD_LINE_CUSTOM;
++            line->data = rule;
++            line->beg += width;
++        }
++    }
+     /* Eat also the new line. */
+     if(off < ctx->size && CH(off) == _T('\r'))
+         off++;
+@@ -6279,6 +6466,17 @@
+             MD_BLOCK* block = (MD_BLOCK*) (((char*)ctx->block_bytes) + c->block_byte_off);
+             block->flags |= MD_BLOCK_LOOSE_LIST;
+         }
++    }
++
 +    /* An append may reclassify the entire final, unterminated line. */
 +    if(off > beg && ISNEWLINE(off-1) && n_parents == 0 && n_brothers == 0) {
 +        if(n_children > 0 || ctx->n_containers > 0 || line->enforce_new_block ||
@@ -243,12 +422,19 @@
 +        if(n_children == 0 && (line->type == MD_LINE_BLANK || line->type == MD_LINE_HR ||
 +                              line->type == MD_LINE_ATXHEADER))
 +            md4w_boundary(ctx->userdata, ctx->boundary = off);
-+    }
-+
+     }
+ 
      /* Leave any containers we are not part of anymore. */
-     if(n_children == 0  &&  n_parents + n_brothers < ctx->n_containers)
-         MD_CHECK(md_leave_child_containers(ctx, n_parents + n_brothers));
-@@ -6389,7 +6495,7 @@
+@@ -6324,7 +6522,7 @@
+         MD_CHECK(md_end_current_block(ctx));
+ 
+     /* Some line types form block on their own. */
+-    if(line->type == MD_LINE_HR || line->type == MD_LINE_ATXHEADER) {
++    if(line->type == MD_LINE_CUSTOM || line->type == MD_LINE_HR || line->type == MD_LINE_ATXHEADER) {
+         MD_CHECK(md_end_current_block(ctx));
+ 
+         /* Add our single-line block. */
+@@ -6389,7 +6587,7 @@
      const MD_LINE_ANALYSIS* pivot_line = &md_dummy_blank_line;
      MD_LINE_ANALYSIS line_buf[2];
      MD_LINE_ANALYSIS* line = &line_buf[0];
@@ -257,7 +443,7 @@
      int ret = 0;
  
      MD_ENTER_BLOCK(MD_BLOCK_DOC, NULL);
-@@ -6398,12 +6504,14 @@
+@@ -6398,12 +6596,14 @@
          if(line == pivot_line)
              line = (line == &line_buf[0] ? &line_buf[1] : &line_buf[0]);
  
@@ -272,11 +458,11 @@
      MD_CHECK(md_build_ref_def_hashtable(ctx));
  
      /* Process all blocks. */
-@@ -6444,8 +6552,30 @@
+@@ -6444,8 +6644,30 @@
   ***  Public API  ***
   ********************/
  
-+#include "session.h"
++
 +
 +struct MD4W_SESSION {
 +    MD_CTX refs;
@@ -304,7 +490,7 @@
  {
      MD_CTX ctx;
      int i;
-@@ -6459,6 +6589,8 @@
+@@ -6459,14 +6681,28 @@
  
      /* Setup context structure. */
      memset(&ctx, 0, sizeof(MD_CTX));
@@ -313,10 +499,13 @@
      ctx.text = text;
      ctx.size = size;
      memcpy(&ctx.parser, parser, sizeof(MD_PARSER));
-@@ -6468,6 +6600,17 @@
+     ctx.userdata = userdata;
+     ctx.code_indent_offset = (ctx.parser.flags & MD_FLAG_NOINDENTEDCODEBLOCKS) ? (OFF)(-1) : 4;
+     md_build_mark_char_map(&ctx);
++    md4w_rule_chars(userdata, ctx.mark_char_map);
      ctx.doc_ends_with_newline = (size > 0  &&  ISNEWLINE_(text[size-1]));
      ctx.max_ref_def_output = MIN(MIN(16 * (uint64_t)size, (uint64_t)(1024 * 1024)), (uint64_t)SZ_MAX);
- 
++
 +    if(session) {
 +        if(start && (session->provisional || (session->exhausted && ctx.max_ref_def_output != session->budget)))
 +            return 1;
@@ -327,11 +516,10 @@
 +        ctx.budget_at_start = ctx.max_ref_def_output;
 +        ctx.max_ref_def_output -= MIN(ctx.max_ref_def_output, session->prefix_cost);
 +    }
-+
+ 
      /* Reset all mark stacks and lists. */
      for(i = 0; i < (int) SIZEOF_ARRAY(ctx.opener_stacks); i++)
-         ctx.opener_stacks[i].top = -1;
-@@ -6480,9 +6623,35 @@
+@@ -6480,9 +6716,35 @@
      /* All the work. */
      ret = md_process_doc(&ctx);
  
@@ -369,7 +557,7 @@
      free(ctx.buffer);
      free(ctx.marks);
      free(ctx.block_bytes);
-@@ -6490,3 +6659,9 @@
+@@ -6490,3 +6752,9 @@
  
      return ret;
  }

@@ -281,7 +281,12 @@ export function parseBlocks(input, options) {
 
 export function createSession(options = {}) {
   const instance = wasm;
+  const rules = options.rules && enc.encode(JSON.stringify(options.rules));
   let handle = instance.openSession();
+  if (rules && !instance.setRules(handle, allocMem(rules))) {
+    instance.closeSession(handle);
+    throw new TypeError("Invalid markdown rule table");
+  }
   let length = 0;
   let boundary = 0;
   let stringLength = 0;

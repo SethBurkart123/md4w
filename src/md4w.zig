@@ -3,6 +3,8 @@ const c = @cImport({
     @cInclude("session.h");
 });
 
+const rule_spec = @import("rules.zig");
+const Rule = rule_spec.Rule;
 const allocator = std.heap.wasm_allocator;
 
 // js functions
@@ -35,6 +37,7 @@ const slugCharMap = [256]u8{
 
 /// The writer handles the output of the md4c parser
 const Writer = struct {
+    rules: []const Rule = &.{},
     blocks: bool = false,
     boundary: u32 = 0,
     definitions: bool = false,
@@ -92,10 +95,17 @@ const Writer = struct {
         self.len += chunk.len;
     }
     pub fn writeNumber(self: *Writer, number: anytype) void {
-        var buffer: [4]u8 = undefined;
+        var buffer: [20]u8 = undefined;
         const buf = buffer[0..];
         self.write(std.fmt.bufPrintIntToSlice(buf, number, 10, .lower, .{}));
     }
+    fn writeListStart(self: *Writer, start: usize) void {
+        // Preserve the four-digit list starts emitted by the original renderer.
+        var prefix = start;
+        while (prefix >= 10000) prefix /= 10;
+        self.writeNumber(prefix);
+    }
+
     fn safeWriteChar(self: *Writer, ch: u8) void {
         switch (ch) {
             '<' => self.write("&lt;"),
@@ -223,7 +233,7 @@ const HTMLRenderer = struct {
                 const ol: *c.MD_BLOCK_OL_DETAIL = @ptrCast(@alignCast(detail));
                 if (ol.start > 1) {
                     w.write("<ol start=\"");
-                    w.writeNumber(@as(usize, @intCast(ol.start)));
+                    w.writeListStart(@intCast(ol.start));
                     w.write("\">\n");
                 } else {
                     w.write("<ol>\n");
@@ -514,7 +524,7 @@ const JOSNRenderer = struct {
                 if (ol.start > 1) {
                     w.writeJSONProps();
                     w.write("\"start\":");
-                    w.writeNumber(@as(usize, @intCast(ol.start)));
+                    w.writeListStart(@intCast(ol.start));
                     w.writeByte('}');
                 }
                 w.writeJSONChildren();
@@ -734,6 +744,51 @@ export fn allocMem(length: u32) u64 {
     }));
 }
 
+export fn md4w_rule_chars(w: *Writer, map: [*]u8) void {
+    for (w.rules) |rule| {
+        if (rule.open.len > 0) map[rule.open[0]] = 1;
+    }
+}
+
+export fn md4w_match(w: *Writer, kind: c_int, ptr: [*]const u8, len: usize, matched: *u32) c_int {
+    const text = ptr[0..len];
+    for (w.rules, 0..) |rule, i| {
+        const token = switch (kind) {
+            0 => rule.open,
+            1 => rule.prefix,
+            else => rule.fence,
+        };
+        if (token.len == 0 or !std.mem.startsWith(u8, text, token)) continue;
+        if (kind == 2 and token.len != len) continue;
+        if (kind == 0) {
+            const index = std.mem.indexOfPos(u8, text, token.len, rule.close) orelse continue;
+            matched.* = index + rule.close.len;
+        } else matched.* = token.len;
+        return @intCast(i);
+    }
+    return -1;
+}
+
+export fn md4w_inner(w: *Writer, id: c_int, _: [*]const u8, _: usize, left: *u32, right: *u32) c_int {
+    const rule = w.rules[@intCast(id)];
+    left.* = rule.open.len;
+    right.* = rule.close.len;
+    return @intFromBool(rule.parsed);
+}
+
+export fn md4w_tag(w: *Writer, id: c_int, start: u32, end: u32, closing: c_int) void {
+    w.write(if (closing != 0) "</x-" else "<x-");
+    w.write(w.rules[@intCast(id)].tag);
+    if (closing == 0) {
+        w.write(" data-start=\"");
+        w.writeNumber(start);
+        w.write("\" data-end=\"");
+        w.writeNumber(end);
+        w.write("\"");
+    }
+    w.write(">");
+}
+
 export fn md4w_block(writer: *Writer, offset: u32) void {
     if (writer.blocks) {
         writer.flush();
@@ -760,18 +815,35 @@ export fn render(ptr_len: u64, flags: usize, buffer_size: usize, has_code_highli
     const md = toSlice(ptr_len);
     defer allocator.free(md);
 
-    return renderDocument(md, flags, buffer_size, has_code_highlighter, output_type, null, 0);
+    return renderDocument(md, flags, buffer_size, has_code_highlighter, output_type, null, 0, &.{});
 }
 
 const Session = struct {
     source: std.ArrayList(u8),
     cache: *c.MD4W_SESSION,
+    rules: ?std.json.Parsed([]Rule) = null,
 };
 
 export fn openSession() *Session {
     const session = allocator.create(Session) catch unreachable;
     session.* = .{ .source = std.ArrayList(u8).init(allocator), .cache = c.md4w_open().? };
     return session;
+}
+
+export fn setRules(session: *Session, ptr_len: u64) bool {
+    const bytes = toSlice(ptr_len);
+    defer allocator.free(bytes);
+    const parsed = std.json.parseFromSlice([]Rule, allocator, bytes, .{ .allocate = .alloc_always }) catch return false;
+    if (parsed.value.len <= 64) {
+        for (parsed.value) |rule| {
+            if (!rule_spec.valid(rule)) break;
+        } else {
+            session.rules = parsed;
+            return true;
+        }
+    }
+    parsed.deinit();
+    return false;
 }
 
 export fn resizeSource(session: *Session, length: usize) [*]u8 {
@@ -782,15 +854,15 @@ export fn resizeSource(session: *Session, length: usize) [*]u8 {
 export fn closeSession(session: *Session) void {
     c.md4w_close(session.cache);
     session.source.deinit();
+    if (session.rules) |rules| rules.deinit();
     allocator.destroy(session);
 }
 
 export fn renderSession(session: *Session, start: u32, flags: u32, highlight: u32) u64 {
-    return renderDocument(session.source.items, flags, 4096, highlight, 3, session.cache, start);
+    return renderDocument(session.source.items, flags, 4096, highlight, 3, session.cache, start, if (session.rules) |r| r.value else &.{});
 }
 
-fn renderDocument(md: []const u8, flags: usize, buffer_size: usize, has_code_highlighter: usize,
-    output_type: usize, cache: ?*c.MD4W_SESSION, start: u32) u64 {
+fn renderDocument(md: []const u8, flags: usize, buffer_size: usize, has_code_highlighter: usize, output_type: usize, cache: ?*c.MD4W_SESSION, start: u32, rules: []const Rule) u64 {
     // todo: use global writer
     var writer = Writer.init(buffer_size, has_code_highlighter > 0);
     defer writer.deinit();
@@ -807,6 +879,7 @@ fn renderDocument(md: []const u8, flags: usize, buffer_size: usize, has_code_hig
         .syntax = null,
     };
 
+    writer.rules = rules;
     writer.boundary = start;
     writer.blocks = output_type == 3;
     const output_json = output_type == 2;
@@ -827,7 +900,8 @@ fn renderDocument(md: []const u8, flags: usize, buffer_size: usize, has_code_hig
         @intCast(md.len),
         &parser,
         @ptrFromInt(@intFromPtr(&writer)),
-        cache, start,
+        cache,
+        start,
     );
 
     if (output_json) {
