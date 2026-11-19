@@ -21,3 +21,12 @@ for (const [text, inner] of [
 const underline = createSession({ streaming: true, parseFlags: ["UNDERLINE"] });
 assert.equal(underline.append("_word").blocks[0].html, "<p><u>word</u></p>\n");
 underline.close();
+
+const pending = createSession({ streaming: true });
+pending.append("first\n\n");
+assert.deepEqual(pending.append("\n").blocks, []);
+assert.deepEqual(pending.append("!").blocks, []);
+assert.equal(pending.append("yes").blocks[0].html, "<p>!yes</p>\n");
+pending.reset("first\n\n!");
+assert.equal(pending.finish().blocks[0].html, "<p>!</p>\n");
+pending.close();

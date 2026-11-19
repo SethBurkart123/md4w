@@ -313,6 +313,8 @@ export function createSession(options = {}) {
     }
     const result = instance.parseBoundary();
     boundary = Number(result & 0xffffffffn);
+    const tail = blocks.at(-1);
+    if (streaming && tail?.offset >= boundary && tail.html === "<p></p>\n") blocks.pop();
     proof = instance.boundaryProof() || (replaceFrom ? proof : 0);
     return { replaceFrom, finishedBytes: boundary, definitionsSeen: rebuild || result >> 32n !== 0n,
       blocks, finishedIds: blocks.filter(b => b.offset < boundary).map(b => b.id) };
