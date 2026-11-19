@@ -12,7 +12,8 @@
       "workerd": "./js/workerd.js",
       "import": "./js/index.js",
       "types": "./js/md4w.d.ts"
-    }
+    },
+    "./js/*": "./js/*"
   },
   "browser": {
     "node:process": false

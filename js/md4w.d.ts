@@ -207,3 +207,9 @@ export async function init(
  * @returns {void}
  */
 export function initSync(wasmModule: WebAssembly.Module): void;
+
+export function parseWithBoundary(input: string | Uint8Array, options?: Options): {
+  html: string;
+  finishedBytes: number;
+  definitionsSeen: boolean;
+};

@@ -121,6 +121,7 @@ const readMem = (ptrLen) => {
  */
 const allocMem = (data) => {
   const ptrLen = wasm.allocMem(data.length); // ask Zig to allocate memory with the given data length
+  if (!data.length) return ptrLen;
   const mem = readMem(ptrLen);
   mem.set(data);
   return ptrLen;
@@ -245,4 +246,10 @@ export function initWasm(wasmModule) {
     wasmModule.default(env);
     wasm = wasmModule;
   }
+}
+
+export function parseWithBoundary(input, options) {
+  const html = mdToHtml(input, options);
+  const result = wasm.parseBoundary();
+  return { html, finishedBytes: Number(result & 0xffffffffn), definitionsSeen: result >> 32n !== 0n };
 }
