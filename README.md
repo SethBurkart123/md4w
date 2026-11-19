@@ -278,7 +278,8 @@ try {
 ```
 
 Set `streaming: true` to render provisional inline spans in the unfinished
-tail. Call `session.finish()` when input ends and apply its update to restore
+tail. A trailing pipe row, with or without the start of its delimiter row,
+renders as the table header it is about to become. Call `session.finish()` when input ends and apply its update to restore
 ordinary Markdown interpretation.
 
 ### Declarative rules
