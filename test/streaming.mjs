@@ -39,6 +39,9 @@ for (const [source, expected] of [
   ["| a | b |", mdToHtml("| a | b |")],
   ["| a | b |\n|---|---|", mdToHtml("| a | b |\n|---|---|")],
   ["text -", "<p>text </p>\n"], ["text +", "<p>text </p>\n"],
+  ["text ==", "<p>text </p>\n"], ["a\\", "<p>a</p>\n"], ["a <", "<p>a </p>\n"],
+  ["👩‍", "<p>👩</p>\n"], ["👩‍💻", mdToHtml("👩‍💻")],
+  ["🇦", ""], ["🇦🇺", mdToHtml("🇦🇺")], ["\u20e3", ""], ["3️⃣", mdToHtml("3️⃣")],
   ["a :smil", "<p>a :smil</p>\n"],
 ]) {
   const session = createSession({ streaming: true });
