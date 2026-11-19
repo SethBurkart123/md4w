@@ -4,14 +4,23 @@ import { createSession, init, mdToHtml } from "../js/index.js";
 await init();
 for (const [text, inner] of [
   ["*outer **inner", "<em>outer <strong>inner</strong></em>"],
-  ["*outer **", "<em>outer </em>"],
+  ["*outer **", "<em>outer</em>"],
   ["a `code", "a <code>code</code>"],
   ["a $x", "a <x-equation>x</x-equation>"],
   ["a ~~word", "a <del>word</del>"],
-  ["[label](https://exam", "label"],
-  ["word *", "word "],
+  ["[a half-wri", "<a>a half-wri</a>"],
+  ["[label](https://exam", "<a>label</a>"],
+  ["[label]", "<a>label</a>"],
+  ["[a] and", "[a] and"],
+  ["[a] [b", "[a] <a>b</a>"],
+  ["see ![alt", "see"],
+  ["see ![alt](https://x.test/a", "see"],
+  ["![alt] and", "![alt] and"],
+  ["see https://exam", "see https://exam"],
+  ["see <https://exam", "see &lt;https://exam"],
+  ["word *", "word"],
 ]) {
-  const options = { streaming: true, parseFlags: ["LATEX_MATH_SPANS", "STRIKETHROUGH"] };
+  const options = { streaming: true, parseFlags: ["LATEX_MATH_SPANS", "STRIKETHROUGH", "PERMISSIVE_URL_AUTO_LINKS"] };
   const session = createSession(options);
   assert.equal(session.append(text).blocks[0].html, "<p>" + inner + "</p>\n");
   assert.equal(session.finish().blocks[0].html, mdToHtml(text, options));
@@ -33,7 +42,7 @@ pending.close();
 
 for (const [source, expected] of [
   ["`", ""], ["``", ""], ["```js", "<pre><code class=\"language-js\"></code></pre>\n"],
-  ["[x][ref", "<p>x</p>\n"], ["[x][ref] after", "<p>x after</p>\n"],
+  ["[x][ref", "<p><a>x</a></p>\n"], ["[x][ref] after", "<p><a>x</a> after</p>\n"],
   ["- [", "<ul>\n<li></li>\n</ul>\n"], ["- [ ", "<ul>\n<li></li>\n</ul>\n"],
   ["- [X", "<ul>\n<li></li>\n</ul>\n"], ["- [x]", mdToHtml("- [x]")],
   ["text -", "<p>text </p>\n"], ["text +", "<p>text </p>\n"],
@@ -61,7 +70,7 @@ for (const [source, options] of [
   assert.equal(session.append(source).blocks[0].html.match(/<th>/g).length, 2, source);
   session.close();
 }
-for (const [source, cell] of [["| *hello", "<em>hello</em>"], ["| [label](https://exam", "label"]]) {
+for (const [source, cell] of [["| *hello", "<em>hello</em>"], ["| [label](https://exam", "<a>label</a>"]]) {
   const session = createSession({ streaming: true });
   assert.ok(session.append(source).blocks[0].html.includes(`<th>${cell}</th>`), source);
   session.close();

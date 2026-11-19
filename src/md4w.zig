@@ -385,6 +385,11 @@ const HTMLRenderer = struct {
             c.MD_SPAN_A => {
                 w.link_depth += 1;
                 if (w.link_depth > 1) return 0;
+                // A streamed half link has no destination yet.
+                if (detail == null) {
+                    w.write("<a>");
+                    return 0;
+                }
                 const a: *c.MD_SPAN_A_DETAIL = @ptrCast(@alignCast(detail));
                 w.write("<a href=\"");
                 w.safeWriteUrl(@as([*]const u8, @ptrCast(a.href.text))[0..a.href.size]);
