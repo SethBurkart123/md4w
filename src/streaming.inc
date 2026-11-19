@@ -24,11 +24,20 @@ md4w_repair_marks(MD_CTX* ctx, OFF end)
             if(m->ch == '!') m->end = end;
             m->ch = 'H';
             m->flags = MD_MARK_RESOLVED;
+        } else if(m->ch == ']' && m->end < end && CH(m->end) == '[' && m->prev >= 0) {
+            OFF close = m->end + 1;
+            while(close < end && CH(close) != ']') {
+                if(CH(close) == '\\' && close+1 < end) close++;
+                close++;
+            }
+            m->end = close < end ? close+1 : end;
+            m->ch = 'H';
+            m->flags = MD_MARK_RESOLVED;
         } else if(m->ch == ']' && (m->end == end || CH(m->end) == '(')) {
             m->ch = 'H';
             m->end = end;
             m->flags = MD_MARK_RESOLVED;
-        } else if(m->ch == '|' || (m->end == end && ISANYOF_(m->ch, "*_~`$"))) {
+        } else if(m->end == end && ISANYOF_(m->ch, "*_~`$")) {
             m->ch = 'H';
             m->flags = MD_MARK_RESOLVED;
         } else if((m->flags & MD_MARK_POTENTIAL_OPENER) && ISANYOF_(m->ch, "*_~`$")) {

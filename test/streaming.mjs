@@ -30,3 +30,28 @@ assert.equal(pending.append("yes").blocks[0].html, "<p>!yes</p>\n");
 pending.reset("first\n\n!");
 assert.equal(pending.finish().blocks[0].html, "<p>!</p>\n");
 pending.close();
+
+for (const [source, expected] of [
+  ["`", ""], ["``", ""], ["```js", "<pre><code class=\"language-js\"></code></pre>\n"],
+  ["[x][ref", "<p>x</p>\n"], ["[x][ref] after", "<p>x after</p>\n"],
+  ["- [", "<ul>\n<li></li>\n</ul>\n"], ["- [ ", "<ul>\n<li></li>\n</ul>\n"],
+  ["- [X", "<ul>\n<li></li>\n</ul>\n"], ["- [x]", mdToHtml("- [x]")],
+  ["| a | b |", mdToHtml("| a | b |")],
+  ["| a | b |\n|---|---|", mdToHtml("| a | b |\n|---|---|")],
+  ["text -", "<p>text </p>\n"], ["text +", "<p>text </p>\n"],
+  ["text ==", "<p>text </p>\n"], ["a\\", "<p>a</p>\n"], ["a <", "<p>a </p>\n"],
+  ["👩‍", "<p>👩</p>\n"], ["👩‍💻", mdToHtml("👩‍💻")],
+  ["🇦", ""], ["🇦🇺", mdToHtml("🇦🇺")], ["\u20e3", ""], ["3️⃣", mdToHtml("3️⃣")],
+  ["a :smil", "<p>a :smil</p>\n"],
+]) {
+  const session = createSession({ streaming: true });
+  assert.equal(session.append(source).blocks.map(b => b.html).join(""), expected, source);
+  assert.equal(session.finish().blocks.map(b => b.html).join(""), mdToHtml(source));
+  session.close();
+}
+for (const chunks of [["\ud83d", "\ude00"], [Uint8Array.of(0xf0, 0x9f), Uint8Array.of(0x98, 0x80)]]) {
+  const session = createSession({ streaming: true });
+  assert.deepEqual(session.append(chunks[0]).blocks, []);
+  assert.equal(session.append(chunks[1]).blocks[0].html, "<p>😀</p>\n");
+  session.close();
+}

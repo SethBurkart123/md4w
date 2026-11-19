@@ -882,8 +882,48 @@ export fn closeSession(session: *Session) void {
     allocator.destroy(session);
 }
 
-export fn renderSession(session: *Session, start: u32, flags: u32, highlight: u32) u64 {
-    return renderDocument(session.source.items, flags, 4096, highlight, 3, session.cache, start, if (session.rules) |r| r.value else &.{});
+fn lastScalar(bytes: []const u8) ?u21 {
+    if (bytes.len == 0) return null;
+    var i = bytes.len - 1;
+    while (i > 0 and bytes.len - i < 4 and bytes[i] & 0xc0 == 0x80) i -= 1;
+    const width = std.unicode.utf8ByteSequenceLength(bytes[i]) catch return null;
+    if (width != bytes.len - i) return null;
+    return std.unicode.utf8Decode(bytes[i..]) catch null;
+}
+
+fn visibleEmojiEnd(tail: []const u8) usize {
+    const last = lastScalar(tail) orelse return tail.len;
+    switch (last) {
+        0x200d => return tail.len - 3,
+        0x20e3 => {
+            var base = tail[0 .. tail.len - 3];
+            if (lastScalar(base) == 0xfe0f) base = base[0 .. base.len - 3];
+            if (base.len == 0 or std.mem.indexOfScalar(u8, "#*0123456789", base[base.len - 1]) == null)
+                return tail.len - 3;
+        },
+        0x1f1e6...0x1f1ff => {
+            var i = tail.len - 4;
+            while (lastScalar(tail[0..i])) |previous| {
+                if (previous < 0x1f1e6 or previous > 0x1f1ff) break;
+                i -= 4;
+            }
+            if ((tail.len - i) % 8 != 0) return tail.len - 4;
+        },
+        else => {},
+    }
+    return tail.len;
+}
+
+export fn renderSession(session: *Session, start: u32, flags: u32, highlight: u32, visible_len: u32) u64 {
+    var source = session.source.items[0..visible_len];
+    if (flags & 0x10000000 != 0 and source.len > start) {
+        var i = source.len - 1;
+        while (i > start and source.len - i < 4 and source[i] & 0xc0 == 0x80) i -= 1;
+        const width = std.unicode.utf8ByteSequenceLength(source[i]) catch 0;
+        if (width > source.len - i) source = source[0..i];
+        source = source[0 .. start + visibleEmojiEnd(source[start..])];
+    }
+    return renderDocument(source, flags, 4096, highlight, 3, session.cache, start, if (session.rules) |r| r.value else &.{});
 }
 
 fn renderDocument(md: []const u8, flags: usize, buffer_size: usize, has_code_highlighter: usize, output_type: usize, cache: ?*c.MD4W_SESSION, start: u32, rules: []const Rule) u64 {
