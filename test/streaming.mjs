@@ -61,6 +61,11 @@ for (const [source, options] of [
   assert.equal(session.append(source).blocks[0].html.match(/<th>/g).length, 2, source);
   session.close();
 }
+for (const [source, cell] of [["| *hello", "<em>hello</em>"], ["| [label](https://exam", "label"]]) {
+  const session = createSession({ streaming: true });
+  assert.ok(session.append(source).blocks[0].html.includes(`<th>${cell}</th>`), source);
+  session.close();
+}
 for (const source of ["text\n| a | b |", "|", "| |", "a | b\n---|---"]) {
   const session = createSession({ streaming: true });
   assert.equal(session.append(source).blocks.map(b => b.html).join(""), mdToHtml(source), source);
