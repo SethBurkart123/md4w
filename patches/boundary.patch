@@ -1,14 +1,48 @@
 --- md4c.c
 +++ md4c.c
-@@ -180,6 +180,7 @@
+@@ -180,6 +180,14 @@
  
      /* Reference definitions. */
      MD_REF_DEF* ref_defs;
 +    OFF source_line;
++    OFF parse_start;
++    MD_CTX* saved_defs;
++    unsigned boundary;
++    unsigned budget_at_start;
++    unsigned prefix_cost;
++    unsigned last_definition_end;
++    int budget_exhausted;
      int n_ref_defs;
      int alloc_ref_defs;
      void** ref_def_hashtable;
-@@ -4658,6 +4659,7 @@
+@@ -2267,6 +2275,7 @@
+     def->dest_end = dest_contents_end;
+ 
+     /* Success. */
++    ctx->last_definition_end = lines[line_index].end;
+     ctx->n_ref_defs++;
+     return line_index + 1;
+ 
+@@ -2311,7 +2320,9 @@
+         label_size = end - beg;
+     }
+ 
+-    def = md_lookup_ref_def(ctx, label, label_size);
++    def = ctx->saved_defs ? md_lookup_ref_def(ctx->saved_defs, label, label_size) : NULL;
++    if(def == NULL)
++        def = md_lookup_ref_def(ctx, label, label_size);
+     if(def != NULL) {
+         attr->dest_beg = def->dest_beg;
+         attr->dest_end = def->dest_end;
+@@ -2332,6 +2343,7 @@
+         } else {
+             MD_LOG("Too many link reference definition instantiations.");
+             ctx->max_ref_def_output = 0;
++            ctx->budget_exhausted = TRUE;
+         }
+     }
+ 
+@@ -4658,6 +4670,7 @@
  #define MD_BLOCK_SETEXT_HEADER      0x08
  
  struct MD_BLOCK_tag {
@@ -16,7 +50,7 @@
      MD_BLOCKTYPE type  :  8;
      unsigned flags     :  8;
  
-@@ -4888,6 +4890,8 @@
+@@ -4888,6 +4901,8 @@
      return ret;
  }
  
@@ -25,17 +59,21 @@
  static int
  md_process_all_blocks(MD_CTX* ctx)
  {
-@@ -4907,6 +4911,9 @@
+@@ -4907,6 +4922,13 @@
              MD_BLOCK_OL_DETAIL ol;
              MD_BLOCK_LI_DETAIL li;
          } det;
 +
 +        if(ctx->n_containers == 0 && !(block->flags & MD_BLOCK_CONTAINER_CLOSER))
++        {
 +            md4w_block(ctx->userdata, block->source_start);
++            if(block->source_start >= ctx->boundary && ctx->prefix_cost == (unsigned)-1)
++                ctx->prefix_cost = ctx->budget_at_start - ctx->max_ref_def_output;
++        }
  
          switch(block->type) {
              case MD_BLOCK_UL:
-@@ -5018,6 +5025,7 @@
+@@ -5018,6 +5040,7 @@
      if(block == NULL)
          return -1;
  
@@ -43,7 +81,7 @@
      switch(line->type) {
          case MD_LINE_HR:
              block->type = MD_BLOCK_HR;
-@@ -5195,6 +5203,7 @@
+@@ -5195,6 +5218,7 @@
      if(block == NULL)
          return -1;
  
@@ -51,7 +89,7 @@
      block->type = type;
      block->flags = flags;
      block->data = data;
-@@ -5813,6 +5822,9 @@
+@@ -5813,6 +5837,9 @@
      *p_end = off;
      return indent - total_indent;
  }
@@ -61,7 +99,7 @@
  
  static const MD_LINE_ANALYSIS md_dummy_blank_line = { MD_LINE_BLANK, 0, 0, 0, 0, 0 };
  
-@@ -6281,6 +6293,17 @@
+@@ -6281,6 +6308,17 @@
          }
      }
  
@@ -70,16 +108,25 @@
 +        if(n_children > 0 || ctx->n_containers > 0 || line->enforce_new_block ||
 +           (line->type != pivot_line->type && line->type != MD_LINE_SETEXTUNDERLINE &&
 +            line->type != MD_LINE_TABLEUNDERLINE && line->type != MD_LINE_BLANK))
-+            md4w_boundary(ctx->userdata, beg);
++            md4w_boundary(ctx->userdata, ctx->boundary = beg);
 +        if(n_children == 0 && (line->type == MD_LINE_BLANK || line->type == MD_LINE_HR ||
 +                              line->type == MD_LINE_ATXHEADER))
-+            md4w_boundary(ctx->userdata, off);
++            md4w_boundary(ctx->userdata, ctx->boundary = off);
 +    }
 +
      /* Leave any containers we are not part of anymore. */
      if(n_children == 0  &&  n_parents + n_brothers < ctx->n_containers)
          MD_CHECK(md_leave_child_containers(ctx, n_parents + n_brothers));
-@@ -6398,12 +6421,14 @@
+@@ -6389,7 +6427,7 @@
+     const MD_LINE_ANALYSIS* pivot_line = &md_dummy_blank_line;
+     MD_LINE_ANALYSIS line_buf[2];
+     MD_LINE_ANALYSIS* line = &line_buf[0];
+-    OFF off = 0;
++    OFF off = ctx->parse_start;
+     int ret = 0;
+ 
+     MD_ENTER_BLOCK(MD_BLOCK_DOC, NULL);
+@@ -6398,12 +6436,14 @@
          if(line == pivot_line)
              line = (line == &line_buf[0] ? &line_buf[1] : &line_buf[0]);
  
@@ -94,3 +141,110 @@
      MD_CHECK(md_build_ref_def_hashtable(ctx));
  
      /* Process all blocks. */
+@@ -6444,8 +6484,30 @@
+  ***  Public API  ***
+  ********************/
+ 
++#include "session.h"
++
++struct MD4W_SESSION {
++    MD_CTX refs;
++    CHAR* snapshot;
++    unsigned prefix_cost;
++    unsigned budget;
++    int provisional;
++    int exhausted;
++};
++
++static void md4w_clear_refs(MD4W_SESSION* s) {
++    md_free_ref_def_hashtable(&s->refs);
++    md_free_ref_defs(&s->refs);
++    free(s->snapshot);
++    memset(s, 0, sizeof(*s));
++}
++
++MD4W_SESSION* md4w_open(void) { MD4W_SESSION* s = malloc(sizeof(*s)); if(s) memset(s, 0, sizeof(*s)); return s; }
++void md4w_close(MD4W_SESSION* s) { md4w_clear_refs(s); free(s); }
++
+ int
+-md_parse(const MD_CHAR* text, MD_SIZE size, const MD_PARSER* parser, void* userdata)
++md4w_parse(const MD_CHAR* text, MD_SIZE size, const MD_PARSER* parser, void* userdata,
++           MD4W_SESSION* session, MD_SIZE start)
+ {
+     MD_CTX ctx;
+     int i;
+@@ -6459,6 +6521,8 @@
+ 
+     /* Setup context structure. */
+     memset(&ctx, 0, sizeof(MD_CTX));
++    ctx.parse_start = ctx.boundary = start;
++    ctx.prefix_cost = (unsigned)-1;
+     ctx.text = text;
+     ctx.size = size;
+     memcpy(&ctx.parser, parser, sizeof(MD_PARSER));
+@@ -6468,6 +6532,17 @@
+     ctx.doc_ends_with_newline = (size > 0  &&  ISNEWLINE_(text[size-1]));
+     ctx.max_ref_def_output = MIN(MIN(16 * (uint64_t)size, (uint64_t)(1024 * 1024)), (uint64_t)SZ_MAX);
+ 
++    if(session) {
++        if(start && (session->provisional || (session->exhausted && ctx.max_ref_def_output != session->budget)))
++            return 1;
++        if(!start)
++            md4w_clear_refs(session);
++        ctx.saved_defs = &session->refs;
++        session->budget = ctx.max_ref_def_output;
++        ctx.budget_at_start = ctx.max_ref_def_output;
++        ctx.max_ref_def_output -= MIN(ctx.max_ref_def_output, session->prefix_cost);
++    }
++
+     /* Reset all mark stacks and lists. */
+     for(i = 0; i < (int) SIZEOF_ARRAY(ctx.opener_stacks); i++)
+         ctx.opener_stacks[i].top = -1;
+@@ -6480,9 +6555,35 @@
+     /* All the work. */
+     ret = md_process_doc(&ctx);
+ 
+-    /* Clean-up. */
++    if(session && ret == 0) {
++        if(start && ctx.n_ref_defs) {
++            ret = 1;
++        } else {
++            session->prefix_cost = ctx.prefix_cost == (unsigned)-1 ?
++                ctx.budget_at_start - ctx.max_ref_def_output : ctx.prefix_cost;
++            session->exhausted = ctx.budget_exhausted;
++            if(ctx.n_ref_defs) {
++                session->provisional = ctx.last_definition_end >= ctx.boundary;
++                session->snapshot = malloc(size);
++                if(session->snapshot == NULL) { ret = -1; goto cleanup; }
++                memcpy(session->snapshot, text, size);
++                for(i = 0; i < ctx.n_ref_defs; i++) {
++                    MD_REF_DEF* d = &ctx.ref_defs[i];
++                    if(!d->label_needs_free) d->label = session->snapshot + (d->label - text);
++                    if(!d->title_needs_free) d->title = session->snapshot + (d->title - text);
++                }
++                session->refs.ref_defs = ctx.ref_defs;
++                session->refs.n_ref_defs = ctx.n_ref_defs;
++                session->refs.ref_def_hashtable = ctx.ref_def_hashtable;
++                session->refs.ref_def_hashtable_size = ctx.ref_def_hashtable_size;
++                ctx.ref_defs = NULL; ctx.n_ref_defs = 0; ctx.ref_def_hashtable = NULL;
++            }
++        }
++    }
++
++cleanup:
++    md_free_ref_def_hashtable(&ctx);
+     md_free_ref_defs(&ctx);
+-    md_free_ref_def_hashtable(&ctx);
+     free(ctx.buffer);
+     free(ctx.marks);
+     free(ctx.block_bytes);
+@@ -6490,3 +6591,9 @@
+ 
+     return ret;
+ }
++
++int
++md_parse(const MD_CHAR* text, MD_SIZE size, const MD_PARSER* parser, void* userdata)
++{
++    return md4w_parse(text, size, parser, userdata, NULL, 0);
++}

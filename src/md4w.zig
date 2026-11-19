@@ -1,6 +1,6 @@
 const std = @import("std");
 const c = @cImport({
-    @cInclude("md4c.h");
+    @cInclude("session.h");
 });
 
 const allocator = std.heap.wasm_allocator;
@@ -760,6 +760,37 @@ export fn render(ptr_len: u64, flags: usize, buffer_size: usize, has_code_highli
     const md = toSlice(ptr_len);
     defer allocator.free(md);
 
+    return renderDocument(md, flags, buffer_size, has_code_highlighter, output_type, null, 0);
+}
+
+const Session = struct {
+    source: std.ArrayList(u8),
+    cache: *c.MD4W_SESSION,
+};
+
+export fn openSession() *Session {
+    const session = allocator.create(Session) catch unreachable;
+    session.* = .{ .source = std.ArrayList(u8).init(allocator), .cache = c.md4w_open().? };
+    return session;
+}
+
+export fn resizeSource(session: *Session, length: usize) [*]u8 {
+    session.source.resize(length) catch unreachable;
+    return session.source.items.ptr;
+}
+
+export fn closeSession(session: *Session) void {
+    c.md4w_close(session.cache);
+    session.source.deinit();
+    allocator.destroy(session);
+}
+
+export fn renderSession(session: *Session, start: u32, flags: u32, highlight: u32) u64 {
+    return renderDocument(session.source.items, flags, 4096, highlight, 3, session.cache, start);
+}
+
+fn renderDocument(md: []const u8, flags: usize, buffer_size: usize, has_code_highlighter: usize,
+    output_type: usize, cache: ?*c.MD4W_SESSION, start: u32) u64 {
     // todo: use global writer
     var writer = Writer.init(buffer_size, has_code_highlighter > 0);
     defer writer.deinit();
@@ -776,6 +807,7 @@ export fn render(ptr_len: u64, flags: usize, buffer_size: usize, has_code_highli
         .syntax = null,
     };
 
+    writer.boundary = start;
     writer.blocks = output_type == 3;
     const output_json = output_type == 2;
     if (output_json) {
@@ -790,11 +822,12 @@ export fn render(ptr_len: u64, flags: usize, buffer_size: usize, has_code_highli
         writer.writeByte('[');
     }
 
-    _ = c.md_parse(
+    const status = c.md4w_parse(
         md.ptr,
         @intCast(md.len),
         &parser,
         @ptrFromInt(@intFromPtr(&writer)),
+        cache, start,
     );
 
     if (output_json) {
@@ -804,8 +837,10 @@ export fn render(ptr_len: u64, flags: usize, buffer_size: usize, has_code_highli
 
     last_boundary = @as(u64, @intFromBool(writer.definitions)) << 32 | writer.boundary;
 
-    // return remaining buffer
-    return toPtrLen(writer.buf[0..writer.len]);
+    if (status < 0) unreachable;
+    if (status > 0) return 0xffffffffffffffff;
+    writer.flush();
+    return 0;
 }
 
 /// get a slice from the pointer and length

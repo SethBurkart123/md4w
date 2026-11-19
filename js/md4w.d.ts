@@ -221,3 +221,19 @@ export interface MarkdownBlock {
 }
 
 export function parseBlocks(input: string | Uint8Array, options?: Options): MarkdownBlock[];
+
+export interface SessionUpdate {
+  replaceFrom: number;
+  finishedBytes: number;
+  definitionsSeen: boolean;
+  blocks: MarkdownBlock[];
+  finishedIds: string[];
+}
+
+export function createSession(options?: Options): {
+  append(input: string | Uint8Array): SessionUpdate;
+  update(fullAppendOnlyText: string | Uint8Array): SessionUpdate;
+  edit(fromByte: number, replacementTail: string | Uint8Array): SessionUpdate;
+  reset(input: string | Uint8Array): SessionUpdate;
+  close(): void;
+};
