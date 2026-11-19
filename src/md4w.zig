@@ -882,8 +882,15 @@ export fn closeSession(session: *Session) void {
     allocator.destroy(session);
 }
 
-export fn renderSession(session: *Session, start: u32, flags: u32, highlight: u32) u64 {
-    return renderDocument(session.source.items, flags, 4096, highlight, 3, session.cache, start, if (session.rules) |r| r.value else &.{});
+export fn renderSession(session: *Session, start: u32, flags: u32, highlight: u32, visible_len: u32) u64 {
+    var source = session.source.items[0..visible_len];
+    if (flags & 0x10000000 != 0 and source.len > start) {
+        var i = source.len - 1;
+        while (i > start and source.len - i < 4 and source[i] & 0xc0 == 0x80) i -= 1;
+        const width = std.unicode.utf8ByteSequenceLength(source[i]) catch 0;
+        if (width > source.len - i) source = source[0..i];
+    }
+    return renderDocument(source, flags, 4096, highlight, 3, session.cache, start, if (session.rules) |r| r.value else &.{});
 }
 
 fn renderDocument(md: []const u8, flags: usize, buffer_size: usize, has_code_highlighter: usize, output_type: usize, cache: ?*c.MD4W_SESSION, start: u32, rules: []const Rule) u64 {

@@ -94,7 +94,7 @@
          while(TRUE) {
              CHAR ch;
  
-@@ -3036,7 +3070,22 @@
+@@ -3036,7 +3070,24 @@
                  break;
  
              ch = CH(off);
@@ -110,7 +110,9 @@
 +                }
 +            }
 +
-+            if(ch == '!' && off+1 == ctx->size && (ctx->parser.flags & MD4W_STREAMING)) {
++            if(off+1 == ctx->size && (ctx->parser.flags & MD4W_STREAMING) &&
++               (ch == '!' || ch == '\\' || ch == '<' ||
++                (ISANYOF_(ch, "-+=") && (off == line->beg || ISBLANK(off-1))))) {
 +                ADD_MARK('H', off, off+1, MD_MARK_RESOLVED);
 +                off++;
 +                continue;
@@ -118,7 +120,7 @@
              /* A backslash escape.
               * It can go beyond line->end as it may involve escaped new
               * line to form a hard break. */
-@@ -3077,6 +3126,9 @@
+@@ -3077,6 +3128,9 @@
                      right_level = 0;
                  }
  
@@ -128,7 +130,7 @@
                  if(left_level != 0  ||  right_level != 0) {
                      unsigned flags = 0;
  
-@@ -3136,10 +3188,19 @@
+@@ -3136,6 +3190,8 @@
                      continue;
                  }
  
@@ -137,18 +139,7 @@
                  off = opener.end;
                  continue;
              }
- 
-+            if(ch == '|' && !table_mode && CH(lines[0].beg) == '|' &&
-+               (md4w_at_tail(ctx, lines[n_lines-1].end) || ((ctx->parser.flags & MD4W_STREAMING) &&
-+                lines[n_lines-1].end+1 == ctx->size && ISNEWLINE(ctx->size-1)))) {
-+                ADD_MARK('H', off, off+1, MD_MARK_RESOLVED);
-+                off++;
-+                continue;
-+            }
-             /* A potential entity start. */
-             if(ch == _T('&')) {
-                 ADD_MARK(ch, off, off+1, MD_MARK_POTENTIAL_OPENER);
-@@ -4205,6 +4266,8 @@
+@@ -4205,6 +4261,8 @@
  
  
  /* Render the output, accordingly to the analyzed ctx->marks. */
@@ -157,7 +148,7 @@
  static int
  md_process_inlines(MD_CTX* ctx, const MD_LINE* lines, MD_SIZE n_lines)
  {
-@@ -4215,6 +4278,7 @@
+@@ -4215,6 +4273,7 @@
      OFF off = lines[0].beg;
      OFF end = lines[n_lines-1].end;
      OFF tmp;
@@ -165,7 +156,7 @@
      int enforce_hardbreak = 0;
      int ret = 0;
  
-@@ -4421,8 +4485,52 @@
+@@ -4421,8 +4480,52 @@
                      MD_TEXT(MD_TEXT_NULLCHAR, _T(""), 1);
                      break;
  
@@ -219,7 +210,7 @@
              }
  
              off = mark->end;
-@@ -4491,6 +4599,21 @@
+@@ -4491,6 +4594,21 @@
          }
      }
  
@@ -241,7 +232,7 @@
  abort:
      return ret;
  }
-@@ -4656,8 +4779,11 @@
+@@ -4656,8 +4774,11 @@
  #define MD_BLOCK_CONTAINER          (MD_BLOCK_CONTAINER_OPENER | MD_BLOCK_CONTAINER_CLOSER)
  #define MD_BLOCK_LOOSE_LIST         0x04
  #define MD_BLOCK_SETEXT_HEADER      0x08
@@ -253,7 +244,7 @@
      MD_BLOCKTYPE type  :  8;
      unsigned flags     :  8;
  
-@@ -4694,6 +4820,7 @@
+@@ -4694,6 +4815,7 @@
      int ret;
  
      MD_CHECK(md_analyze_inlines(ctx, lines, n_lines, FALSE));
@@ -261,7 +252,7 @@
      MD_CHECK(md_process_inlines(ctx, lines, n_lines));
  
  abort:
-@@ -4706,6 +4833,39 @@
+@@ -4706,6 +4828,39 @@
  }
  
  static int
@@ -301,7 +292,7 @@
  md_process_verbatim_block_contents(MD_CTX* ctx, MD_TEXTTYPE text_type, const MD_VERBATIMLINE* lines, MD_SIZE n_lines)
  {
      static const CHAR indent_chunk_str[] = _T("                ");
-@@ -4745,6 +4905,12 @@
+@@ -4745,6 +4900,12 @@
      if(is_fenced) {
          /* Skip the first line in case of fenced code: It is the fence.
           * (Only the starting fence is present due to logic in md_analyze_line().) */
@@ -314,7 +305,7 @@
          lines++;
          n_lines--;
      } else {
-@@ -4847,6 +5013,25 @@
+@@ -4847,6 +5008,25 @@
              break;
      }
  
@@ -340,7 +331,7 @@
      if(!is_in_tight_list  ||  block->type != MD_BLOCK_P)
          MD_ENTER_BLOCK(block->type, (void*) &det);
  
-@@ -4887,6 +5072,8 @@
+@@ -4887,6 +5067,8 @@
      }
      return ret;
  }
@@ -349,7 +340,7 @@
  
  static int
  md_process_all_blocks(MD_CTX* ctx)
-@@ -4907,6 +5094,13 @@
+@@ -4907,6 +5089,13 @@
              MD_BLOCK_OL_DETAIL ol;
              MD_BLOCK_LI_DETAIL li;
          } det;
@@ -363,7 +354,7 @@
  
          switch(block->type) {
              case MD_BLOCK_UL:
-@@ -5018,6 +5212,8 @@
+@@ -5018,6 +5207,8 @@
      if(block == NULL)
          return -1;
  
@@ -372,7 +363,7 @@
      switch(line->type) {
          case MD_LINE_HR:
              block->type = MD_BLOCK_HR;
-@@ -5033,6 +5229,7 @@
+@@ -5033,6 +5224,7 @@
              block->type = MD_BLOCK_CODE;
              break;
  
@@ -380,7 +371,7 @@
          case MD_LINE_TEXT:
              block->type = MD_BLOCK_P;
              break;
-@@ -5049,7 +5246,7 @@
+@@ -5049,7 +5241,7 @@
              break;
      }
  
@@ -389,7 +380,7 @@
      block->data = line->data;
      block->n_lines = 0;
  
-@@ -5119,7 +5316,7 @@
+@@ -5119,7 +5311,7 @@
      /* Check whether there is a reference definition. (We do this here instead
       * of in md_analyze_line() because reference definition can take multiple
       * lines.) */
@@ -398,7 +389,7 @@
         (ctx->current_block->type == MD_BLOCK_H  &&  (ctx->current_block->flags & MD_BLOCK_SETEXT_HEADER)))
      {
          MD_LINE* lines = (MD_LINE*) (ctx->current_block + 1);
-@@ -5195,6 +5392,8 @@
+@@ -5195,6 +5387,8 @@
      if(block == NULL)
          return -1;
  
@@ -407,7 +398,7 @@
      block->type = type;
      block->flags = flags;
      block->data = data;
-@@ -5814,6 +6013,9 @@
+@@ -5814,6 +6008,9 @@
      return indent - total_indent;
  }
  
@@ -417,7 +408,7 @@
  static const MD_LINE_ANALYSIS md_dummy_blank_line = { MD_LINE_BLANK, 0, 0, 0, 0, 0 };
  
  /* Analyze type of the line and find some its properties. This serves as a
-@@ -5885,6 +6087,7 @@
+@@ -5885,6 +6082,7 @@
               * which we transform into MD_LINE_BLANK. */
              if(line->indent < ctx->code_indent_offset) {
                  if(md_is_closing_code_fence(ctx, CH(pivot_line->beg), off, &off)) {
@@ -425,19 +416,19 @@
                      line->type = MD_LINE_BLANK;
                      ctx->last_line_has_list_loosening_effect = FALSE;
                      break;
-@@ -6176,6 +6379,11 @@
-             if(ctx->current_block != NULL  &&  ctx->current_block->n_lines == 1  &&
-                 md_is_table_underline(ctx, off, &off, &col_count))
-             {
-+                if((ctx->parser.flags & MD4W_STREAMING) && off == ctx->size &&
-+                   CH(((MD_LINE*)(ctx->current_block+1))[0].beg) == '|') {
-+                    line->type = MD_LINE_TEXT;
-+                    break;
-+                }
-                 line->data = col_count;
-                 line->type = MD_LINE_TABLEUNDERLINE;
-                 break;
-@@ -6264,6 +6472,15 @@
+@@ -6197,6 +6395,11 @@
+ 
+             while(tmp < ctx->size  &&  tmp < off + 3  &&  ISBLANK(tmp))
+                 tmp++;
++            if((ctx->parser.flags & MD4W_STREAMING) && tmp < ctx->size && CH(tmp) == '[' &&
++               (tmp+1 == ctx->size || (tmp+2 == ctx->size && ISANYOF(tmp+1, "xX ")))) {
++                line->beg = off = ctx->size;
++                break;
++            }
+             if(tmp + 2 < ctx->size  &&  CH(tmp) == _T('[')  &&
+                ISANYOF(tmp+1, _T("xX "))  &&  CH(tmp+2) == _T(']')  &&
+                (tmp + 3 == ctx->size  ||  ISBLANK(tmp+3)  ||  ISNEWLINE(tmp+3)))
+@@ -6264,6 +6467,15 @@
              line->end--;
      }
  
@@ -453,7 +444,7 @@
      /* Eat also the new line. */
      if(off < ctx->size && CH(off) == _T('\r'))
          off++;
-@@ -6279,6 +6496,17 @@
+@@ -6279,6 +6491,17 @@
              MD_BLOCK* block = (MD_BLOCK*) (((char*)ctx->block_bytes) + c->block_byte_off);
              block->flags |= MD_BLOCK_LOOSE_LIST;
          }
@@ -471,7 +462,7 @@
      }
  
      /* Leave any containers we are not part of anymore. */
-@@ -6324,7 +6552,7 @@
+@@ -6324,7 +6547,7 @@
          MD_CHECK(md_end_current_block(ctx));
  
      /* Some line types form block on their own. */
@@ -480,7 +471,7 @@
          MD_CHECK(md_end_current_block(ctx));
  
          /* Add our single-line block. */
-@@ -6389,7 +6617,7 @@
+@@ -6389,7 +6612,7 @@
      const MD_LINE_ANALYSIS* pivot_line = &md_dummy_blank_line;
      MD_LINE_ANALYSIS line_buf[2];
      MD_LINE_ANALYSIS* line = &line_buf[0];
@@ -489,7 +480,7 @@
      int ret = 0;
  
      MD_ENTER_BLOCK(MD_BLOCK_DOC, NULL);
-@@ -6398,12 +6626,14 @@
+@@ -6398,12 +6621,14 @@
          if(line == pivot_line)
              line = (line == &line_buf[0] ? &line_buf[1] : &line_buf[0]);
  
@@ -504,7 +495,7 @@
      MD_CHECK(md_build_ref_def_hashtable(ctx));
  
      /* Process all blocks. */
-@@ -6444,8 +6674,30 @@
+@@ -6444,8 +6669,30 @@
   ***  Public API  ***
   ********************/
  
@@ -536,7 +527,7 @@
  {
      MD_CTX ctx;
      int i;
-@@ -6459,14 +6711,28 @@
+@@ -6459,14 +6706,30 @@
  
      /* Setup context structure. */
      memset(&ctx, 0, sizeof(MD_CTX));
@@ -549,6 +540,8 @@
      ctx.code_indent_offset = (ctx.parser.flags & MD_FLAG_NOINDENTEDCODEBLOCKS) ? (OFF)(-1) : 4;
      md_build_mark_char_map(&ctx);
 +    md4w_rule_chars(userdata, ctx.mark_char_map);
++    if(ctx.parser.flags & MD4W_STREAMING)
++        ctx.mark_char_map['-'] = ctx.mark_char_map['+'] = ctx.mark_char_map['='] = 1;
      ctx.doc_ends_with_newline = (size > 0  &&  ISNEWLINE_(text[size-1]));
      ctx.max_ref_def_output = MIN(MIN(16 * (uint64_t)size, (uint64_t)(1024 * 1024)), (uint64_t)SZ_MAX);
 +
@@ -565,7 +558,7 @@
  
      /* Reset all mark stacks and lists. */
      for(i = 0; i < (int) SIZEOF_ARRAY(ctx.opener_stacks); i++)
-@@ -6480,9 +6746,35 @@
+@@ -6480,9 +6743,35 @@
      /* All the work. */
      ret = md_process_doc(&ctx);
  
@@ -603,7 +596,7 @@
      free(ctx.buffer);
      free(ctx.marks);
      free(ctx.block_bytes);
-@@ -6490,3 +6782,9 @@
+@@ -6490,3 +6779,9 @@
  
      return ret;
  }
