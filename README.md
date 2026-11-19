@@ -4,19 +4,19 @@ This branch contains an installable package. Pin its commit in your dependency
 manifest. The default module loads ReleaseSmall. Use `await init("fast")` to
 load the stripped ReleaseFast file explicitly.
 
-Both Wasm binaries are built from `9931944156033608995a502bc7e7fa073fcde4d5`.
+Both Wasm binaries are built from `e4f8a67bf109d4ebf891ae78faa5a0aa23009439`.
 Use Zig 0.11.0 and LLVM objcopy 18:
 
 ```sh
 git clone --recurse-submodules https://github.com/SethBurkart123/md4w.git source
 cd source
-git checkout 9931944156033608995a502bc7e7fa073fcde4d5
+git checkout e4f8a67bf109d4ebf891ae78faa5a0aa23009439
 git submodule update --init --recursive
 zig build -j2
 llvm-objcopy-18 --strip-all js/md4w-fast.wasm
 ```
 
-The session binding, type declarations and Wasm use the same [source commit](https://github.com/SethBurkart123/md4w/tree/9931944156033608995a502bc7e7fa073fcde4d5).
+The session binding, type declarations and Wasm use the same [source commit](https://github.com/SethBurkart123/md4w/tree/e4f8a67bf109d4ebf891ae78faa5a0aa23009439).
 
 ```js
 import { init, createSession } from "md4w";
