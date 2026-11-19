@@ -303,8 +303,9 @@ export function createSession(options = {}) {
     const ptr = instance.resizeSource(handle, length);
     if (bytes.length) new Uint8Array(instance.memory.buffer, ptr + from, bytes.length).set(bytes);
     let replaceFrom = proof <= from ? boundary : 0;
+    const visibleLength = streaming && highSurrogate ? length - 3 : length;
     const render = () => collectOutput(3, Math.max(256, length - replaceFrom), () =>
-      instance.renderSession(handle, replaceFrom, streaming ? flags | 0x10000000 : flags, typeof highlighter === "function" ? 1 : 0));
+      instance.renderSession(handle, replaceFrom, streaming ? flags | 0x10000000 : flags, typeof highlighter === "function" ? 1 : 0, visibleLength));
     let blocks = render();
     const rebuild = blocks === null;
     if (rebuild) {
