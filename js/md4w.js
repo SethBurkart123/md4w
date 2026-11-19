@@ -287,6 +287,7 @@ export function createSession(options = {}) {
   let stringLength = 0;
   let highSurrogate = "";
   const flags = validateParseFlags(options.parseFlags);
+  let streaming = !!options.streaming;
 
   function write(input, from) {
     if (!handle || wasm !== instance) throw new Error("Inactive markdown session");
@@ -297,7 +298,7 @@ export function createSession(options = {}) {
     if (bytes.length) new Uint8Array(instance.memory.buffer, ptr + from, bytes.length).set(bytes);
     let replaceFrom = boundary <= from ? boundary : 0;
     const render = () => collectOutput(3, Math.max(256, length - replaceFrom), () =>
-      instance.renderSession(handle, replaceFrom, flags, typeof highlighter === "function" ? 1 : 0));
+      instance.renderSession(handle, replaceFrom, streaming ? flags | 0x10000000 : flags, typeof highlighter === "function" ? 1 : 0));
     let blocks = render();
     const rebuild = blocks === null;
     if (rebuild) {
@@ -333,6 +334,10 @@ export function createSession(options = {}) {
       if (typeof full === "string" && stringLength === null) throw new Error("Use reset to switch input types");
       const end = typeof full === "string" ? stringLength : length;
       return full.length < end ? this.reset(full) : append(full.slice(end));
+    },
+    finish() {
+      streaming = false;
+      return write(new Uint8Array(), length);
     },
     edit(from, input) {
       if (!Number.isInteger(from) || from < 0 || from > length) throw new RangeError("Invalid source byte offset");

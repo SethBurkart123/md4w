@@ -276,3 +276,7 @@ try {
   session.close();
 }
 ```
+
+Set `streaming: true` to render provisional inline spans in the unfinished
+tail. Call `session.finish()` when input ends and apply its update to restore
+ordinary Markdown interpretation.

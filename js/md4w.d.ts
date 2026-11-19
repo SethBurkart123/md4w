@@ -230,10 +230,11 @@ export interface SessionUpdate {
   finishedIds: string[];
 }
 
-export function createSession(options?: Options): {
+export function createSession(options?: Options & { streaming?: boolean }): {
   append(input: string | Uint8Array): SessionUpdate;
   update(fullAppendOnlyText: string | Uint8Array): SessionUpdate;
   edit(fromByte: number, replacementTail: string | Uint8Array): SessionUpdate;
   reset(input: string | Uint8Array): SessionUpdate;
+  finish(): SessionUpdate;
   close(): void;
 };
