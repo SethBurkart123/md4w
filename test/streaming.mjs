@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createSession, init, mdToHtml } from "../js/index.js";
+import { createSession, init, mdToHtml, mdToJSON } from "../js/index.js";
 
 await init();
 for (const [text, inner] of [
@@ -26,6 +26,8 @@ for (const [text, inner] of [
   assert.equal(session.finish().blocks[0].html, mdToHtml(text, options));
   session.close();
 }
+
+assert.deepEqual(mdToJSON("[a half", { parseFlags: 0x10000000 }), mdToJSON("[a half"));
 
 const underline = createSession({ streaming: true, parseFlags: ["UNDERLINE"] });
 assert.equal(underline.append("_word").blocks[0].html, "<p><u>word</u></p>\n");
