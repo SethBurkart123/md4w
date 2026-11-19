@@ -15,3 +15,8 @@ assert.match(blocks[1].html, /<x-value [^>]+>&amp;<\/x-value>/);
 assert.match(blocks[1].html, /<x-note [^>]+><em>hi<\/em><\/x-note>/);
 assert.match(blocks[2].html, /<x-diagram [^>]+>&lt;b&gt;\n<\/x-diagram>/);
 session.close();
+
+const embedded = createSession({ rules: [{ open: "^^", close: "^^", tag: "note", parsed: true }] });
+assert.equal(embedded.append("![^^alt^^](/img)").blocks[0].html, '<p><img src="/img" alt="alt"></p>\n');
+assert.equal((embedded.reset("[^^[inner](/i)^^](/o)").blocks[0].html.match(/<a /g) ?? []).length, 1);
+embedded.close();

@@ -38,8 +38,12 @@ const slugCharMap = [256]u8{
 /// The writer handles the output of the md4c parser
 const Writer = struct {
     rules: []const Rule = &.{},
+    missing_close_end: [64]usize = [_]usize{0} ** 64,
+    missing_close_start: [64]usize = [_]usize{0} ** 64,
+    link_depth: usize = 0,
     blocks: bool = false,
     boundary: u32 = 0,
+    proof: u32 = 0,
     definitions: bool = false,
     buf: []u8 = undefined,
     len: usize = 0,
@@ -379,6 +383,8 @@ const HTMLRenderer = struct {
             c.MD_SPAN_EM => w.write("<em>"),
             c.MD_SPAN_STRONG => w.write("<strong>"),
             c.MD_SPAN_A => {
+                w.link_depth += 1;
+                if (w.link_depth > 1) return 0;
                 const a: *c.MD_SPAN_A_DETAIL = @ptrCast(@alignCast(detail));
                 w.write("<a href=\"");
                 w.safeWriteUrl(@as([*]const u8, @ptrCast(a.href.text))[0..a.href.size]);
@@ -426,7 +432,10 @@ const HTMLRenderer = struct {
         switch (typ) {
             c.MD_SPAN_EM => w.write("</em>"),
             c.MD_SPAN_STRONG => w.write("</strong>"),
-            c.MD_SPAN_A => w.write("</a>"),
+            c.MD_SPAN_A => {
+                w.link_depth -= 1;
+                if (w.link_depth == 0) w.write("</a>");
+            },
             c.MD_SPAN_IMG => {
                 const img: *c.MD_SPAN_IMG_DETAIL = @ptrCast(@alignCast(detail));
                 if (img.title.size > 0) {
@@ -459,13 +468,14 @@ const HTMLRenderer = struct {
             while (i < len) {
                 const textContent = @as([*]const u8, @ptrCast(ptr));
                 const ch = textContent[i];
-                const code_point_len: u3 = switch (ch) {
-                    0b0000_0000...0b0111_1111 => 1,
-                    0b1100_0000...0b1101_1111 => 2,
-                    0b1110_0000...0b1110_1111 => 3,
-                    0b1111_0000...0b1111_0111 => 4,
-                    else => unreachable,
-                };
+                const code_point_len = std.unicode.utf8ByteSequenceLength(ch) catch 0;
+                if (code_point_len == 0 or code_point_len > len - i or
+                    !std.unicode.utf8ValidateSlice(textContent[i .. i + code_point_len]))
+                {
+                    w.updateSlug('-');
+                    i += 1;
+                    continue;
+                }
                 if (code_point_len == 1) {
                     w.updateSlug(slugCharMap[ch]);
                 } else {
@@ -761,7 +771,14 @@ export fn md4w_match(w: *Writer, kind: c_int, ptr: [*]const u8, len: usize, matc
         if (token.len == 0 or !std.mem.startsWith(u8, text, token)) continue;
         if (kind == 2 and token.len != len) continue;
         if (kind == 0) {
-            const index = std.mem.indexOfPos(u8, text, token.len, rule.close) orelse continue;
+            const start = @intFromPtr(ptr);
+            const end = start + len;
+            if (start >= w.missing_close_start[i] and end <= w.missing_close_end[i]) continue;
+            const index = std.mem.indexOfPos(u8, text, token.len, rule.close) orelse {
+                w.missing_close_start[i] = start;
+                w.missing_close_end[i] = end;
+                continue;
+            };
             matched.* = index + rule.close.len;
         } else matched.* = token.len;
         return @intCast(i);
@@ -777,6 +794,7 @@ export fn md4w_inner(w: *Writer, id: c_int, _: [*]const u8, _: usize, left: *u32
 }
 
 export fn md4w_tag(w: *Writer, id: c_int, start: u32, end: u32, closing: c_int) void {
+    if (w.image_nesting_level > 0) return;
     w.write(if (closing != 0) "</x-" else "<x-");
     w.write(w.rules[@intCast(id)].tag);
     if (closing == 0) {
@@ -796,12 +814,18 @@ export fn md4w_block(writer: *Writer, offset: u32) void {
     }
 }
 
-export fn md4w_boundary(userdata: *Writer, offset: u32) void {
+export fn md4w_boundary(userdata: *Writer, offset: u32, proof: u32) void {
     userdata.boundary = offset;
+    userdata.proof = proof;
 }
 
 export fn md4w_definitions(userdata: *Writer) void {
     userdata.definitions = true;
+}
+
+var last_proof: u32 = 0;
+export fn boundaryProof() u32 {
+    return last_proof;
 }
 
 var last_boundary: u64 = 0;
@@ -909,6 +933,7 @@ fn renderDocument(md: []const u8, flags: usize, buffer_size: usize, has_code_hig
         writer.writeByte(']');
     }
 
+    last_proof = writer.proof;
     last_boundary = @as(u64, @intFromBool(writer.definitions)) << 32 | writer.boundary;
 
     if (status < 0) unreachable;

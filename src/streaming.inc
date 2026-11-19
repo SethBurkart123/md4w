@@ -21,6 +21,7 @@ md4w_repair_marks(MD_CTX* ctx, OFF end)
         }
         if(m->ch == 'D') continue;
         if(m->ch == '[' || m->ch == '!') {
+            if(m->ch == '!') m->end = end;
             m->ch = 'H';
             m->flags = MD_MARK_RESOLVED;
         } else if(m->ch == ']' && (m->end == end || CH(m->end) == '(')) {

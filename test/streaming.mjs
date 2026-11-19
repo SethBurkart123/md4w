@@ -17,3 +17,7 @@ for (const [text, inner] of [
   assert.equal(session.finish().blocks[0].html, mdToHtml(text, options));
   session.close();
 }
+
+const underline = createSession({ streaming: true, parseFlags: ["UNDERLINE"] });
+assert.equal(underline.append("_word").blocks[0].html, "<p><u>word</u></p>\n");
+underline.close();

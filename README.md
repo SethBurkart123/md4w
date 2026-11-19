@@ -298,3 +298,22 @@ createSession({ rules: [
   { fence: "tikz", tag: "diagram" },
 ] });
 ```
+
+### Build and verify
+
+Use Zig 0.11.0 and Node.js 22. From the repository root run:
+
+```sh
+git submodule update --init --recursive
+zig build -j2
+for suite in boundary blocks session streaming rules; do node "test/$suite.mjs" || exit 1; done
+baseline=$(mktemp -d)
+npm pack md4w@0.2.7 --ignore-scripts --pack-destination "$baseline"
+tar -xzf "$baseline/md4w-0.2.7.tgz" -C "$baseline"
+node test/spec-parity.mjs "$baseline/package"
+```
+
+Import `js/md4w.js` and initialize it with
+`initWasm(await WebAssembly.compileStreaming(fetch(wasmUrl)))`.
+Use `js/md4w-small.wasm` for browsers. The Fast build is available as
+`js/md4w-fast.wasm`.

@@ -20,3 +20,8 @@ for (const doc of documents) {
   a.close();
   b.close();
 }
+
+const edited = createSession();
+edited.append("one\n\nnext\n```\nbody");
+assert.equal(edited.edit(11, "text").replaceFrom, 0);
+edited.close();
